@@ -1,0 +1,210 @@
+/* Theme tokens (ARCHITECTURE.md § 18). Components use tokens only, never literal colors. */
+:root {
+  color-scheme: light dark;
+  --surface: #ffffff;
+  --surface-2: #f4f6f9;
+  --text: #1b2330;
+  --text-muted: #5a6474;
+  --border: #d9dee6;
+  --accent: #0f6cbd;
+  --accent-text: #ffffff;
+
+  --network-ipv4: #2f6fde;
+  --network-ipv6: #0f9d8a;
+  --network-dualstack: #7a4fd6;
+  --network-warning: #c77700;
+  --network-critical: #c42b1c;
+  --network-hub: #b3409b;
+  --network-spoke: #4b7bb5;
+
+  --cat-org: #6b7280;
+  --cat-network: #2f6fde;
+  --cat-security: #c42b1c;
+  --cat-routing: #b35c00;
+  --cat-compute: #4d7c0f;
+  --cat-edge: #0e7490;
+  --cat-dns: #7a4fd6;
+  --cat-hybrid: #a16207;
+  --cat-external: #8a8f98;
+
+  --edge-peering: #2f6fde;
+  --edge-route: #b35c00;
+  --edge-security: #c42b1c;
+  --edge-nat: #0e7490;
+  --edge-gateway: #a16207;
+  --edge-pe: #7a4fd6;
+  --edge-dns: #9d5bb0;
+  --edge-attached: #9aa3af;
+  --container-bg: rgba(47, 111, 222, 0.035);
+  --selection: #0f6cbd;
+
+  --change-added: #1a8f3c;
+  --change-removed: #c42b1c;
+  --change-changed: #d97706;
+
+  --radius: 6px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #161a20;
+    --surface-2: #1f242c;
+    --text: #e6e9ee;
+    --text-muted: #9aa4b2;
+    --border: #333a45;
+    --accent: #4f9df0;
+    --accent-text: #0b1522;
+
+    --network-ipv4: #6f9ef0;
+    --network-ipv6: #3cc7b3;
+    --network-dualstack: #a585ec;
+    --network-warning: #f0a33a;
+    --network-critical: #f06a5b;
+    --network-hub: #df7cc7;
+    --network-spoke: #86a9d6;
+
+    --cat-org: #9aa4b2;
+    --cat-network: #6f9ef0;
+    --cat-security: #f06a5b;
+    --cat-routing: #f0a33a;
+    --cat-compute: #9acd4f;
+    --cat-edge: #4cc4dc;
+    --cat-dns: #a585ec;
+    --cat-hybrid: #e0b54a;
+    --cat-external: #7c838e;
+
+    --edge-peering: #6f9ef0;
+    --edge-route: #f0a33a;
+    --edge-security: #f06a5b;
+    --edge-nat: #4cc4dc;
+    --edge-gateway: #e0b54a;
+    --edge-pe: #a585ec;
+    --edge-dns: #c58ad6;
+    --edge-attached: #5d6673;
+    --container-bg: rgba(111, 158, 240, 0.05);
+    --selection: #4f9df0;
+
+    --change-added: #3fcf6c;
+    --change-removed: #f06a5b;
+    --change-changed: #f5a524;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.app-header h1 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.app-main {
+  padding: var(--space-3);
+  display: grid;
+  gap: var(--space-3);
+  max-width: 1200px;
+}
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  background: var(--surface);
+}
+
+.panel h2 {
+  font-size: 15px;
+  margin: 0 0 var(--space-2);
+}
+
+button {
+  font: inherit;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+  cursor: pointer;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  text-align: left;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.status-ok {
+  color: var(--network-ipv6);
+}
+
+.status-warn {
+  color: var(--network-warning);
+}
+
+.status-error {
+  color: var(--network-critical);
+}
+
+.row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}

@@ -1,0 +1,55 @@
+{
+  "name": "azure-network-audit-assistant",
+  "version": "0.1.0",
+  "description": "Read-only Azure network discovery, topology, IPv4/IPv6 dual-stack and architecture assessment",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "preview": "vite preview",
+    "discover": "tsx src/cli/index.ts discover",
+    "verify:arg": "tsx scripts/verify-arg-coverage.ts"
+  },
+  "dependencies": {
+    "@azure/arm-cdn": "^10.0.0",
+    "@azure/arm-network": "^39.0.0",
+    "@azure/arm-resourcegraph": "^5.0.0",
+    "@azure/arm-resources-subscriptions": "^3.0.0",
+    "@azure/core-auth": "^1.11.0",
+    "@azure/core-rest-pipeline": "^1.25.0",
+    "@azure/identity": "^4.13.3",
+    "@azure/msal-browser": "^5.23.0",
+    "@xyflow/react": "^12.12.0",
+    "commander": "^15.0.0",
+    "elkjs": "^0.12.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.9",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.1",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.1"
+  }
+}
