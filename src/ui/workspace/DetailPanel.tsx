@@ -19,6 +19,9 @@ import type { EntityRef } from "./entityIndex.js";
 import { downloadJson } from "./download.js";
 import type { ComparisonGraph } from "../../drift/diff.js";
 import { ChangeDetails } from "./Changes.js";
+import type { RoutingContext } from "../../routing/context.js";
+import { synthesizeRoutes } from "../../routing/routes.js";
+import { parseCidr } from "../../addressing/ip.js";
 
 interface DetailPanelProps {
   model: NetworkModel;
@@ -31,7 +34,11 @@ interface DetailPanelProps {
   onFocus: (id: string | undefined) => void;
   onToggleExpand: (id: string) => void;
   changes?: ComparisonGraph | undefined;
+  routing?: RoutingContext | undefined;
+  onTracePath?: ((id: string) => void) | undefined;
 }
+
+const TRACEABLE = new Set(["subnet", "nic", "vm", "vmss", "privateEndpoint"]);
 
 export function DetailPanel({
   model,
@@ -44,6 +51,8 @@ export function DetailPanel({
   onFocus,
   onToggleExpand,
   changes,
+  routing,
+  onTracePath,
 }: DetailPanelProps) {
   const node = index.byId.get(nodeId);
   if (!node) return <div className="detail muted">Element nicht gefunden.</div>;
@@ -75,6 +84,14 @@ export function DetailPanel({
         {children.length > 0 && (
           <button className="secondary" onClick={() => onToggleExpand(node.id)}>
             {expanded ? "Zuklappen" : `Aufklappen (${children.length})`}
+          </button>
+        )}
+        {onTracePath && TRACEABLE.has(node.type) && (
+          <button
+            onClick={() => onTracePath(node.id)}
+            title="Weg ins Internet oder zu einer IP – IPv4 und IPv6 im Vergleich"
+          >
+            Pfadanalyse IPv4/IPv6
           </button>
         )}
         <button
@@ -168,6 +185,10 @@ export function DetailPanel({
       )}
 
       <TypeSpecific model={model} node={node} entity={entity} Link={Link} />
+
+      {routing && node.type === "subnet" && (
+        <EffectiveRoutes routing={routing} subnetId={node.id} Link={Link} />
+      )}
 
       <Relationships index={index} node={node} onSelect={onSelect} />
 
@@ -652,3 +673,67 @@ function FirewallRules({ group }: { group: RuleCollectionGroupEntity }) {
 const isOpenSource = (s: string) =>
   s === "*" || s === "Internet" || s === "0.0.0.0/0" || s === "::/0" || s === "Any";
 const yesNo = (v: boolean | undefined) => (v === undefined ? "–" : v ? "ja" : "nein");
+
+/** Configuration-based effective routes of a subnet per family (ARCHITECTURE.md § 12.1). */
+function EffectiveRoutes({
+  routing,
+  subnetId,
+  Link,
+}: {
+  routing: RoutingContext;
+  subnetId: string;
+  Link: LinkComponent;
+}) {
+  const routes = (["ipv4", "ipv6"] as const)
+    .flatMap((f) => synthesizeRoutes(routing, subnetId, f))
+    .sort(
+      (a, b) =>
+        a.family.localeCompare(b.family) ||
+        (parseCidr(b.prefix)?.length ?? 0) - (parseCidr(a.prefix)?.length ?? 0) ||
+        a.source.localeCompare(b.source),
+    );
+  if (routes.length === 0) return null;
+  const SOURCE: Record<string, string> = {
+    udr: "UDR",
+    system: "System",
+    peering: "Peering",
+    gateway: "Gateway",
+  };
+  return (
+    <Section title={`Effektive Routen (rekonstruiert, ${routes.length})`}>
+      <table className="grid">
+        <thead>
+          <tr>
+            <th>Präfix</th>
+            <th>Quelle</th>
+            <th>Next Hop</th>
+            <th>Ziel</th>
+            <th>Konfidenz</th>
+          </tr>
+        </thead>
+        <tbody>
+          {routes.map((r, i) => (
+            <tr
+              key={`${r.prefix}-${r.source}-${i}`}
+              className={r.prefix === "0.0.0.0/0" || r.prefix === "::/0" ? "highlight" : ""}
+              title={r.note ?? ""}
+            >
+              <td className="mono">{r.prefix}</td>
+              <td>{SOURCE[r.source]}</td>
+              <td>
+                {r.nextHopType}
+                {r.nextHopIpAddress ? <span className="mono"> {r.nextHopIpAddress}</span> : null}
+              </td>
+              <td>{r.nextHopResourceId ? <Link id={r.nextHopResourceId} /> : ""}</td>
+              <td>{r.confidence}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="muted small">
+        Bei gleicher Präfixlänge gilt UDR vor Gateway (BGP) vor System. Per BGP gelernte Routen sind nicht
+        einsehbar (Konfidenz POSSIBLE).
+      </p>
+    </Section>
+  );
+}

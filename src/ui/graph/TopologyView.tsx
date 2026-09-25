@@ -33,6 +33,8 @@ export interface TopologyViewProps {
   changes?: ComparisonGraph | undefined;
   /** True when IP mode or "only changes" filter is active (for the empty-result message). */
   filterActive?: boolean;
+  /** Ordered node IDs of a traced network path, drawn as animated path edges. */
+  pathEdges?: string[] | undefined;
 }
 
 export function TopologyView(props: TopologyViewProps) {
@@ -54,6 +56,7 @@ function TopologyCanvas({
   onToggleExpand,
   changes,
   filterActive,
+  pathEdges,
 }: TopologyViewProps) {
   const layoutClient = useMemo(() => new LayoutClient(), []);
   useEffect(() => () => layoutClient.dispose(), [layoutClient]);
@@ -108,7 +111,7 @@ function TopologyCanvas({
 
   const edges = useMemo<Edge[]>(() => {
     if (!ready) return [];
-    return view.edges.map((e) => {
+    const result: Edge[] = view.edges.map((e) => {
       const family =
         e.families.length === 1 ? ` fam-${e.families[0]}` : e.families.length > 1 ? " fam-both" : "";
       const baseLabel = showEdgeLabels ? (e.label ?? EDGE_TYPE_LABELS[e.type]) : undefined;
@@ -126,7 +129,25 @@ function TopologyCanvas({
         focusable: false,
       } satisfies Edge;
     });
-  }, [ready, view, showEdgeLabels, changes]);
+    if (pathEdges && pathEdges.length > 1) {
+      const visibleIds = new Set(view.nodes.map((n) => n.node.id));
+      const chain = pathEdges.filter((id) => visibleIds.has(id));
+      for (let i = 1; i < chain.length; i++) {
+        result.push({
+          id: `path:${i}:${chain[i - 1]}->${chain[i]}`,
+          source: chain[i - 1]!,
+          target: chain[i]!,
+          className: "edge-path",
+          animated: true,
+          label: String(i),
+          markerEnd: { type: MarkerType.ArrowClosed },
+          focusable: false,
+          zIndex: 1000,
+        });
+      }
+    }
+    return result;
+  }, [ready, view, showEdgeLabels, changes, pathEdges]);
 
   // Fit the whole view when the structure changes; center on a revealed node otherwise.
   useEffect(() => {

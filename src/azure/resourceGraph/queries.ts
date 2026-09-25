@@ -109,13 +109,20 @@ export const NETWORK_QUERIES: readonly ArgQueryDefinition[] = [
     "microsoft.cdn/cdnwebapplicationfirewallpolicies",
   ]),
   typeQuery("Q-SEC-DDOS", "resources", "DDoS protection plans", [n("ddosprotectionplans")]),
-  typeQuery("Q-SEC-AVNM", "networkresources", "Azure Virtual Network Manager effective configuration", [
-    n("effectivesecurityadminrules"),
-    n("effectiveconnectivityconfigurations"),
-    n("networkgroupmemberships"),
-    n("virtualnetworks/subnets/effectiveroutingrules"),
-    n("networkmanagerconnections"),
-  ]),
+  typeQuery(
+    "Q-SEC-AVNM",
+    "networkresources",
+    "Azure Virtual Network Manager effective configuration and rule snapshots",
+    [
+      n("effectivesecurityadminrules"),
+      n("effectiveconnectivityconfigurations"),
+      n("networkgroupmemberships"),
+      n("virtualnetworks/subnets/effectiveroutingrules"),
+      n("networkmanagerconnections"),
+      n("networkmanagers/securityadminconfigurations/rulecollections/rules/snapshots"),
+      n("networkmanagers/connectivityconfigurations/snapshots"),
+    ],
+  ),
   typeQuery("Q-SEC-NSP", "networkresources", "Network security perimeters", [
     n("networksecurityperimeters/profiles"),
     n("networksecurityperimeters/profiles/accessrules"),

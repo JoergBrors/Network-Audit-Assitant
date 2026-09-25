@@ -71,6 +71,39 @@ describe("normalizeInventory", () => {
     });
   });
 
+  it("reads StandardV2 IPv6 addresses from publicIpAddressesV6 (IPv6-only NAT gateway)", () => {
+    const raw = F.hubSpokeRaw();
+    const pip6 = F.net(F.SUB_CONN, "rg-hub", "publicIPAddresses", "pip-nat6");
+    const nat = raw.resources["Q-NET-NAT"]![0]!;
+    nat.sku = { name: "StandardV2" };
+    nat.properties = { ...nat.properties, publicIpAddresses: [], publicIpAddressesV6: [{ id: pip6 }] };
+    raw.resources["Q-NET-PIP"] = [
+      ...raw.resources["Q-NET-PIP"]!.filter((r) => r.id !== F.PIP_NAT),
+      F.res(
+        pip6,
+        "microsoft.network/publicipaddresses",
+        { ipAddress: "2001:db8:1::1", publicIPAddressVersion: "IPv6" },
+        { sku: { name: "StandardV2" } },
+      ),
+    ];
+    expect(normalizeInventory(raw).natGateways[0]).toMatchObject({
+      sku: "StandardV2",
+      publicIpIds: [lc(pip6)],
+      ipv4EgressConfigured: false,
+      ipv6EgressConfigured: true,
+    });
+  });
+
+  it("adds NAT gateway public IPs known only from the IP's natGateway back-reference", () => {
+    const raw = F.hubSpokeRaw();
+    const nat = raw.resources["Q-NET-NAT"]![0]!;
+    nat.properties = { ...nat.properties, publicIpAddresses: [] };
+    expect(normalizeInventory(raw).natGateways[0]).toMatchObject({
+      publicIpIds: [lc(F.PIP_NAT)],
+      ipv4EgressConfigured: true,
+    });
+  });
+
   it("attaches public IPs to their owning resource and merges PE NIC addresses", () => {
     expect(inv.publicIps.find((p) => p.id === lc(F.PIP_VM))).toMatchObject({
       ipVersion: "ipv6",

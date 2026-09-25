@@ -39,6 +39,9 @@ import type {
   VirtualMachineEntity,
   VirtualNetworkGatewayEntity,
   VNetEntity,
+  VirtualHubEntity,
+  AvnmModel,
+  AvnmAdminRuleEntity,
 } from "../models/network.js";
 import {
   lastSegment,
@@ -204,6 +207,10 @@ export function normalizeInventory(raw: RawInventory): NormalizedInventory {
     scaleSets: [],
     otherNetworkResources: [],
     unclassifiedNetworkResources: [],
+    virtualHubs: [],
+    serviceTags:
+      raw.enrichment?.serviceTags?.tags.map((t) => ({ name: t.name, prefixes: [...t.prefixes] })) ?? [],
+    avnm: { adminRules: [], vnetAdminConfigurations: {}, connectedGroups: [] },
   };
 
   for (const r of of(T.vnet)) normalizeVnet(r, inv);
@@ -233,6 +240,13 @@ export function normalizeInventory(raw: RawInventory): NormalizedInventory {
   }
   for (const r of unclassifiedRows)
     inv.unclassifiedNetworkResources.push(normalizeGeneric(r, "unclassified"));
+
+  for (const r of (byType.get("microsoft.network/virtualhubs") ?? []).filter((h) =>
+    refId(propsOf(h)["virtualWan"]),
+  )) {
+    inv.virtualHubs.push(normalizeVirtualHub(r, raw));
+  }
+  inv.avnm = normalizeAvnm(byType);
 
   resolveCrossReferences(inv);
   sortInventory(inv);
@@ -401,7 +415,10 @@ function normalizeRouteTable(r: RawResource, inv: NormalizedInventory): void {
       addressPrefix: prefix,
       ipVersion: family ?? "serviceTag",
       nextHopType: str(rp["nextHopType"]) ?? "Unknown",
-      nextHopIpAddress: str(rp["nextHopIpAddress"]),
+      nextHopIpAddress: str(rp["nextHopIpAddress"]) ?? strings(obj(rp["nextHop"])["nextHopIpAddresses"])[0],
+      ...(strings(obj(rp["nextHop"])["nextHopIpAddresses"]).length > 0
+        ? { nextHopIpAddresses: strings(obj(rp["nextHop"])["nextHopIpAddresses"]) }
+        : {}),
       defaultRoute: isDefaultRoutePrefix(prefix) !== undefined,
     };
     inv.routes.push(entity);
@@ -473,6 +490,9 @@ function ipConfiguration(value: unknown): IpConfigurationEntity {
     publicIpId: refId(p["publicIPAddress"]),
     primary: bool(p["primary"]) ?? false,
     loadBalancerBackendPoolIds: refIds(p["loadBalancerBackendAddressPools"]),
+    ...(arr(p["applicationSecurityGroups"]).length > 0
+      ? { applicationSecurityGroupIds: refIds(p["applicationSecurityGroups"]) }
+      : {}),
   };
 }
 
@@ -543,8 +563,9 @@ function normalizeNatGateway(r: RawResource): NatGatewayEntity {
     sku: str(skuOf(r)["name"]) ?? "Standard",
     zones: zonesOf(r),
     subnetIds: refIds(p["subnets"]),
-    publicIpIds: refIds(p["publicIpAddresses"]),
-    publicIpPrefixIds: refIds(p["publicIpPrefixes"]),
+    // StandardV2 keeps IPv6 addresses/prefixes in separate *V6 properties.
+    publicIpIds: [...new Set([...refIds(p["publicIpAddresses"]), ...refIds(p["publicIpAddressesV6"])])],
+    publicIpPrefixIds: [...new Set([...refIds(p["publicIpPrefixes"]), ...refIds(p["publicIpPrefixesV6"])])],
     idleTimeoutInMinutes: num(p["idleTimeoutInMinutes"]),
     // Computed in resolveCrossReferences once public IP families are known.
     ipv4EgressConfigured: false,
@@ -580,6 +601,7 @@ function normalizeFirewall(r: RawResource): FirewallEntity {
     ],
     threatIntelMode: str(p["threatIntelMode"]),
     virtualHubId: refId(p["virtualHub"]),
+    hubPublicIps: arr(obj(obj(hub["publicIPs"]))["addresses"]).flatMap((a) => strings([obj(a)["address"]])),
     dnsProxyEnabled: bool(extra["Network.DNS.EnableProxy"]),
     classicRuleCollections: {
       application: arr(p["applicationRuleCollections"]).length,
@@ -678,6 +700,32 @@ function normalizeLoadBalancer(r: RawResource): LoadBalancerEntity {
     })),
     loadBalancingRules: arr(p["loadBalancingRules"]).length,
     inboundNatRules: arr(p["inboundNatRules"]).length,
+    rules: arr(p["loadBalancingRules"]).map((x) => {
+      const rp = obj(obj(x)["properties"]);
+      const fe = refId(rp["frontendIPConfiguration"]);
+      const pool = refId(rp["backendAddressPool"]) ?? refIds(rp["backendAddressPools"])[0];
+      return {
+        name: str(obj(x)["name"]) ?? "rule",
+        protocol: str(rp["protocol"]) ?? "All",
+        frontendPort: num(rp["frontendPort"]),
+        backendPort: num(rp["backendPort"]),
+        frontendName: fe ? lastSegment(fe) : undefined,
+        backendPool: pool ? lastSegment(pool) : undefined,
+      };
+    }),
+    natRules: arr(p["inboundNatRules"]).map((x) => {
+      const rp = obj(obj(x)["properties"]);
+      const fe = refId(rp["frontendIPConfiguration"]);
+      const target = refId(rp["backendIPConfiguration"]);
+      return {
+        name: str(obj(x)["name"]) ?? "nat",
+        protocol: str(rp["protocol"]) ?? "All",
+        frontendPort: num(rp["frontendPort"]),
+        backendPort: num(rp["backendPort"]),
+        frontendName: fe ? lastSegment(fe) : undefined,
+        targetId: target ? ownerOfIpConfiguration(target) : undefined,
+      };
+    }),
     outboundRules: arr(p["outboundRules"]).map((o) => {
       const op = obj(obj(o)["properties"]);
       const pool = refId(op["backendAddressPool"]);
@@ -732,6 +780,16 @@ function normalizeAppGateway(r: RawResource): ApplicationGatewayEntity {
       };
     }),
     routingRules: arr(p["requestRoutingRules"]).length,
+    routes: arr(p["requestRoutingRules"]).map((x) => {
+      const rp = obj(obj(x)["properties"]);
+      const listener = refId(rp["httpListener"]);
+      const pool = refId(rp["backendAddressPool"]);
+      return {
+        name: str(obj(x)["name"]) ?? "rule",
+        listener: listener ? lastSegment(listener) : undefined,
+        backendPool: pool ? lastSegment(pool) : undefined,
+      };
+    }),
     wafPolicyId: refId(p["firewallPolicy"]),
     wafEnabled: bool(obj(p["webApplicationFirewallConfiguration"])["enabled"]),
   };
@@ -1028,6 +1086,12 @@ function resolveCrossReferences(inv: NormalizedInventory): void {
 
   // NAT gateway egress families (StandardV2 is required for IPv6; the SKU check is an assessment concern).
   for (const nat of inv.natGateways) {
+    // Back-references (publicIp.natGateway) cover properties the NAT row may not list.
+    for (const pip of inv.publicIps)
+      if (pip.natGatewayId === nat.id && !nat.publicIpIds.includes(pip.id)) nat.publicIpIds.push(pip.id);
+    for (const prefix of inv.publicIpPrefixes)
+      if (prefix.natGatewayId === nat.id && !nat.publicIpPrefixIds.includes(prefix.id))
+        nat.publicIpPrefixIds.push(prefix.id);
     const families = new Set<IpFamily>([
       ...nat.publicIpIds.flatMap((id) => (pips.get(id) ? [pips.get(id)!.ipVersion] : [])),
       ...nat.publicIpPrefixIds.flatMap((id) => (prefixes.get(id) ? [prefixes.get(id)!.ipVersion] : [])),
@@ -1082,4 +1146,176 @@ function sortInventory(inv: NormalizedInventory): void {
       (value as { id: string }[]).sort(byId);
     }
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Virtual WAN (Resource Graph + ARM enrichment)
+
+function normalizeVirtualHub(r: RawResource, raw: RawInventory): VirtualHubEntity {
+  const b = base(r);
+  const p = propsOf(r);
+  const detail = raw.enrichment?.virtualHubs[b.id];
+  const intent = obj(obj(detail?.routingIntents[0])["properties"]);
+  let internetNextHop: string | undefined;
+  let privateNextHop: string | undefined;
+  for (const policy of arr(intent["routingPolicies"])) {
+    const po = obj(policy);
+    const destinations = strings(po["destinations"]).map((d) => d.toLowerCase());
+    const nextHop = normalizeId(str(po["nextHop"]));
+    if (destinations.includes("internet")) internetNextHop = nextHop;
+    if (destinations.includes("privatetraffic")) privateNextHop = nextHop;
+  }
+  return {
+    ...b,
+    virtualWanId: refId(p["virtualWan"]),
+    addressPrefix: str(p["addressPrefix"]),
+    addressPrefixV6: str(p["addressPrefixV6"]),
+    firewallId: refId(p["azureFirewall"]),
+    sku: str(p["sku"]),
+    ...(internetNextHop || privateNextHop ? { routingIntent: { internetNextHop, privateNextHop } } : {}),
+    connections: (detail?.connections ?? []).map((c) => {
+      const co = obj(c);
+      const cp = obj(co["properties"]);
+      const rc = obj(cp["routingConfiguration"]);
+      const propagated = obj(rc["propagatedRouteTables"]);
+      const id =
+        normalizeId(str(co["id"])) ?? `${b.id}/hubvirtualnetworkconnections/${str(co["name"]) ?? "?"}`;
+      return {
+        id,
+        name: str(co["name"]) ?? lastSegment(id),
+        hubId: b.id,
+        remoteVnetId: refId(cp["remoteVirtualNetwork"]),
+        enableInternetSecurity: bool(cp["enableInternetSecurity"]) ?? true,
+        associatedRouteTableId: refId(rc["associatedRouteTable"]),
+        propagatedRouteTableIds: refIds(propagated["ids"]),
+        propagatedLabels: strings(propagated["labels"]).map((l) => l.toLowerCase()),
+        staticRoutes: arr(obj(rc["vnetRoutes"])["staticRoutes"]).map((sr) => ({
+          name: str(obj(sr)["name"]) ?? "static",
+          addressPrefixes: strings(obj(sr)["addressPrefixes"]),
+          nextHopIpAddress: str(obj(sr)["nextHopIpAddress"]),
+        })),
+      };
+    }),
+    routeTables: (detail?.routeTables ?? []).map((t) => {
+      const to = obj(t);
+      const tp = obj(to["properties"]);
+      const id = normalizeId(str(to["id"])) ?? `${b.id}/hubroutetables/${str(to["name"]) ?? "?"}`;
+      return {
+        id,
+        name: str(to["name"]) ?? lastSegment(id),
+        labels: strings(tp["labels"]).map((l) => l.toLowerCase()),
+        routes: arr(tp["routes"]).map((x) => {
+          const xo = obj(x);
+          return {
+            name: str(xo["name"]) ?? "route",
+            destinationType: str(xo["destinationType"]) ?? "CIDR",
+            destinations: strings(xo["destinations"]),
+            nextHopType: str(xo["nextHopType"]) ?? "ResourceId",
+            nextHop: normalizeId(str(xo["nextHop"])) ?? "",
+          };
+        }),
+      };
+    }),
+    detailStatus: detail?.status ?? "not-run",
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Azure Virtual Network Manager (networkresources; property casing varies between camel/Pascal)
+
+/** Case-insensitive property access (AVNM rows use camelCase and PascalCase). */
+function ci(o: unknown, key: string): unknown {
+  const ob = obj(o);
+  if (key in ob) return ob[key];
+  const lower = key.toLowerCase();
+  const hit = Object.keys(ob).find((k) => k.toLowerCase() === lower);
+  return hit ? ob[hit] : undefined;
+}
+
+/** `/…/securityAdminConfigurations/cfg/snapshots/3` → `/…/securityadminconfigurations/cfg` */
+function configurationBase(id: string): string {
+  const lower = id.toLowerCase();
+  const m = /^(.*\/(?:securityadminconfigurations|connectivityconfigurations)\/[^/]+)/.exec(lower);
+  return m?.[1] ?? lower.replace(/\/snapshots\/[^/]+$/, "");
+}
+
+function addressList(value: unknown): string[] {
+  return arr(value).flatMap((a) => {
+    const v = str(ci(a, "addressPrefix"));
+    return v ? [v] : typeof a === "string" ? [a] : [];
+  });
+}
+
+function normalizeAvnm(byType: Map<string, RawResource[]>): AvnmModel {
+  const model: AvnmModel = { adminRules: [], vnetAdminConfigurations: {}, connectedGroups: [] };
+  const rows = (type: string) => byType.get(type) ?? [];
+
+  // Rule snapshots: keep the highest snapshot per rule.
+  const latest = new Map<string, { snapshot: number; rule: AvnmAdminRuleEntity }>();
+  for (const r of rows(
+    "microsoft.network/networkmanagers/securityadminconfigurations/rulecollections/rules/snapshots",
+  )) {
+    const id = normalizeId(r.id);
+    const p = r.properties ?? {};
+    const ruleId = id.replace(/\/snapshots\/[^/]+$/, "");
+    const snapshot = Number(/\/snapshots\/(\d+)$/.exec(id)?.[1] ?? 0);
+    const access = (str(ci(p, "access")) ?? "Allow").toLowerCase();
+    const rule: AvnmAdminRuleEntity = {
+      id: ruleId,
+      name: lastSegment(ruleId),
+      configurationId: configurationBase(ruleId),
+      priority: num(ci(p, "priority")) ?? 4096,
+      access: access === "deny" ? "Deny" : access === "alwaysallow" ? "AlwaysAllow" : "Allow",
+      direction: (str(ci(p, "direction")) ?? "Inbound").toLowerCase() === "outbound" ? "Outbound" : "Inbound",
+      protocol: str(ci(p, "protocol")) ?? "Any",
+      sources: addressList(ci(p, "sources")),
+      destinations: addressList(ci(p, "destinations")),
+      sourcePorts: strings(ci(p, "sourcePortRanges")),
+      destinationPorts: strings(ci(p, "destinationPortRanges")),
+    };
+    const prev = latest.get(ruleId);
+    if (!prev || prev.snapshot < snapshot) latest.set(ruleId, { snapshot, rule });
+  }
+  model.adminRules = [...latest.values()].map((x) => x.rule).sort((a, b) => a.priority - b.priority);
+
+  for (const r of rows("microsoft.network/effectivesecurityadminrules")) {
+    const vnetId = normalizeId(r.id).split("/providers/microsoft.network/effectivesecurityadminrules")[0]!;
+    const configs = arr(ci(r.properties, "effectiveSecurityAdminConfigurations")).flatMap((c) => {
+      const id = str(ci(c, "id"));
+      return id ? [configurationBase(id)] : [];
+    });
+    model.vnetAdminConfigurations[vnetId] = [...new Set(configs)];
+  }
+
+  // Connectivity: VNets sharing an effective mesh / direct-connectivity configuration.
+  const topology = new Map<string, string>();
+  for (const r of rows("microsoft.network/networkmanagers/connectivityconfigurations/snapshots")) {
+    const p = r.properties ?? {};
+    const groups = arr(ci(p, "appliesToGroups"));
+    const direct = groups.some(
+      (g) => (str(ci(g, "groupConnectivity")) ?? "").toLowerCase() === "directlyconnected",
+    );
+    const t = str(ci(p, "connectivityTopology")) ?? "Unknown";
+    topology.set(configurationBase(normalizeId(r.id)), t.toLowerCase() === "mesh" || direct ? "Mesh" : t);
+  }
+  const members = new Map<string, Set<string>>();
+  for (const r of rows("microsoft.network/effectiveconnectivityconfigurations")) {
+    const vnetId = normalizeId(r.id).split(
+      "/providers/microsoft.network/effectiveconnectivityconfigurations",
+    )[0]!;
+    for (const c of arr(ci(r.properties, "effectiveConnectivityConfigurations"))) {
+      const id = str(ci(c, "id"));
+      if (!id) continue;
+      const base = configurationBase(id);
+      const set = members.get(base) ?? new Set<string>();
+      set.add(vnetId);
+      members.set(base, set);
+    }
+  }
+  for (const [configurationId, vnets] of members) {
+    const t = topology.get(configurationId) ?? "Unknown";
+    if (t === "Mesh" && vnets.size > 1)
+      model.connectedGroups.push({ configurationId, topology: t, vnetIds: [...vnets].sort() });
+  }
+  return model;
 }

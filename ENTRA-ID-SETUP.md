@@ -101,6 +101,7 @@ Diese Befehle **ändern Entra ID** (sie legen eine App-Registrierung an). Sie ge
 | Effective Routes / Effective NSG pro NIC (präzisere Routing-Analyse) | Custom Role mit `Microsoft.Network/networkInterfaces/effectiveRouteTable/action` und `Microsoft.Network/networkInterfaces/effectiveNetworkSecurityGroups/action` | Subscriptions | optional, im Tool standardmäßig **aus** |
 
 Empfehlung:
+
 - Eine Entra-Gruppe, z. B. `sg-network-audit-readers`, erhält `Reader` auf der obersten relevanten Management Group.
 - **Kein** Contributor oder Owner für Audit-Benutzer. Hat ein Benutzer zusätzlich Schreibrechte, verhindert das Tool trotzdem Schreibzugriffe (§ 1), das Token selbst wäre aber mächtiger.
 
@@ -164,6 +165,7 @@ VITE_ENTRA_AUTHORITY=https://login.microsoftonline.com/organizations
 Client-ID und Authority sind **keine Geheimnisse**. Sie stehen im ausgelieferten JavaScript, so wie bei jeder SPA.
 
 Token-Verhalten:
+
 - Token-Cache: `sessionStorage` (wird mit dem Tab geschlossen); die App persistiert, loggt oder exportiert keine Tokens.
 - Access Tokens für ARM gelten ca. 60–90 Minuten; SPA-Refresh-Tokens 24 Stunden. Danach ist eine erneute interaktive Anmeldung (Popup) nötig.
 

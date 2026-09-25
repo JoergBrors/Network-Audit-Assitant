@@ -6,7 +6,12 @@ import {
   type IpFamily,
 } from "../addressing/ip.js";
 import type { EdgeType, GraphEdge, GraphNode, NetworkGraph, NodeType } from "../models/graph.js";
-import type { BaseEntity, GenericNetworkEntity, NormalizedInventory } from "../models/network.js";
+import type {
+  BaseEntity,
+  GenericNetworkEntity,
+  NatGatewayEntity,
+  NormalizedInventory,
+} from "../models/network.js";
 import { lastSegment } from "../utils/ids.js";
 
 type Props = GraphNode["properties"];
@@ -219,6 +224,10 @@ export function buildGraph(inv: NormalizedInventory): NetworkGraph {
     });
     if (v.ddosProtectionPlanId) addEdge("attached", v.id, v.ddosProtectionPlanId);
   }
+  // Internet endpoints for every IP family in use (targets of routes and path traces).
+  if (inv.vnets.some((v) => v.addressSpace.ipv4.length > 0)) ensureInternet("ipv4");
+  if (inv.vnets.some((v) => v.addressSpace.ipv6.length > 0)) ensureInternet("ipv6");
+
   for (const s of inv.subnets) {
     addNode({
       id: s.id,
@@ -247,6 +256,12 @@ export function buildGraph(inv: NormalizedInventory): NetworkGraph {
       name: rt.name,
       ...common(rt),
       parentId: containerOf(rt),
+      // Families the table routes (IP mode filter); service tag routes carry no family.
+      addressing: splitByFamily(
+        inv.routes
+          .filter((r) => r.routeTableId === rt.id && r.ipVersion !== "serviceTag")
+          .map((r) => r.addressPrefix),
+      ),
       properties: {
         routes: rt.routeIds.length,
         subnets: rt.subnetIds.length,
@@ -334,6 +349,8 @@ export function buildGraph(inv: NormalizedInventory): NetworkGraph {
       name: nat.name,
       ...common(nat),
       parentId: containerOf(nat),
+      // Egress addresses (public IPs / prefixes) – decides IPv4/IPv6/dual stack in the IP mode filter.
+      addressing: natEgressAddressing(inv, nat),
       properties: {
         sku: nat.sku,
         subnets: nat.subnetIds.length,
@@ -823,5 +840,14 @@ function pickScalar(p: GenericNetworkEntity["properties"]): Props {
     if (typeof v === "string" && /^\/subscriptions\//.test(v)) continue;
     out[k] = v;
   }
+  return out;
+}
+
+function natEgressAddressing(inv: NormalizedInventory, nat: NatGatewayEntity): FamilySplit {
+  const out: FamilySplit = { ipv4: [], ipv6: [] };
+  for (const pip of inv.publicIps.filter((p) => nat.publicIpIds.includes(p.id)))
+    out[pip.ipVersion].push(pip.ipAddress ?? `${pip.name} (nicht zugewiesen)`);
+  for (const pfx of inv.publicIpPrefixes.filter((p) => nat.publicIpPrefixIds.includes(p.id)))
+    out[pfx.ipVersion].push(pfx.prefix ?? pfx.name);
   return out;
 }

@@ -8,6 +8,12 @@ import { buildEntityIndex } from "./entityIndex.js";
 import { SearchBox } from "./SearchBox.js";
 import { TreeView } from "./TreeView.js";
 import { ChangeList, ComparisonBar } from "./Changes.js";
+import { PathPanel } from "./PathPanel.js";
+import { DefaultPathsView } from "./DefaultPathsView.js";
+import { buildRoutingContext } from "../../routing/context.js";
+import { analyzeDefaultPaths } from "../../routing/analysis.js";
+import { analyzeInbound } from "../../routing/inbound.js";
+import type { IpFamily } from "../../addressing/ip.js";
 import { downloadJson } from "./download.js";
 
 export interface WorkspaceComparison {
@@ -83,6 +89,21 @@ export function Workspace({
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [revealId, setRevealId] = useState<string | undefined>();
   const [showEdgeLabels, setShowEdgeLabels] = useState(false);
+  const [center, setCenter] = useState<"graph" | "paths">("graph");
+  const [pathSource, setPathSource] = useState<string | undefined>();
+  const [pathShown, setPathShown] = useState<{ family: IpFamily; ids: string[] } | undefined>();
+  const [pathDirection, setPathDirection] = useState<"outbound" | "inbound">("outbound");
+  const routing = useMemo(() => buildRoutingContext(model.inventory), [model.inventory]);
+  const defaultPaths = useMemo(
+    () =>
+      center === "paths" && pathDirection === "outbound" ? analyzeDefaultPaths(model.inventory, routing) : [],
+    [center, pathDirection, model.inventory, routing],
+  );
+  const inboundPaths = useMemo(
+    () => (center === "paths" && pathDirection === "inbound" ? analyzeInbound(routing) : []),
+    [center, pathDirection, routing],
+  );
+  const pathIds = useMemo(() => (pathShown ? new Set(pathShown.ids) : undefined), [pathShown]);
 
   const subscriptionFilter = useMemo(
     () => (subscription ? new Set([subscription]) : undefined),
@@ -98,8 +119,9 @@ export function Workspace({
         ipMode,
         changedIds,
         onlyChanges: onlyChanges && changedIds !== undefined,
+        pathIds,
       }),
-    [index, level, expanded, focusId, subscriptionFilter, ipMode, changedIds, onlyChanges],
+    [index, level, expanded, focusId, subscriptionFilter, ipMode, changedIds, onlyChanges, pathIds],
   );
 
   const toggleExpand = useCallback((id: string) => {
@@ -139,6 +161,14 @@ export function Workspace({
 
       <section className="pane pane-graph">
         <div className="toolbar">
+          <div className="segmented" role="group" aria-label="Ansicht">
+            <button className={center === "graph" ? "active" : ""} onClick={() => setCenter("graph")}>
+              Graph
+            </button>
+            <button className={center === "paths" ? "active" : ""} onClick={() => setCenter("paths")}>
+              Internet-Pfade
+            </button>
+          </div>
           <SearchBox index={index} onSelect={reveal} />
           <label>
             Detailstufe{" "}
@@ -221,21 +251,45 @@ export function Workspace({
           </div>
         )}
 
-        <TopologyView
-          view={view}
-          expanded={expanded}
-          selectedId={selectedId}
-          ipMode={ipMode}
-          showEdgeLabels={showEdgeLabels}
-          revealId={revealId}
-          changes={compareGraph}
-          filterActive={ipMode !== "all" || (onlyChanges && !!comparison)}
-          onSelect={(id) => {
-            setSelectedId(id);
-            setRevealId(undefined);
-          }}
-          onToggleExpand={toggleExpand}
-        />
+        {pathShown && (
+          <div className="focus-bar small path-bar">
+            Pfad ({pathShown.family === "ipv4" ? "IPv4" : "IPv6"}) wird hervorgehoben – andere Elemente sind
+            ausgeblendet.
+            <button className="secondary small-button" onClick={() => setPathShown(undefined)}>
+              Pfad ausblenden
+            </button>
+          </div>
+        )}
+
+        {center === "paths" ? (
+          <DefaultPathsView
+            paths={defaultPaths}
+            inbound={inboundPaths}
+            direction={pathDirection}
+            onDirection={setPathDirection}
+            onOpen={(id) => {
+              setSelectedId(id);
+              setPathSource(id);
+            }}
+          />
+        ) : (
+          <TopologyView
+            view={view}
+            pathEdges={pathShown?.ids}
+            expanded={expanded}
+            selectedId={selectedId}
+            ipMode={ipMode}
+            showEdgeLabels={showEdgeLabels}
+            revealId={revealId}
+            changes={compareGraph}
+            filterActive={!pathShown && (ipMode !== "all" || (onlyChanges && !!comparison))}
+            onSelect={(id) => {
+              setSelectedId(id);
+              setRevealId(undefined);
+            }}
+            onToggleExpand={toggleExpand}
+          />
+        )}
 
         <div className="legend small">
           {LEGEND.map(([cls, label]) => (
@@ -267,7 +321,25 @@ export function Workspace({
       </section>
 
       <aside className="pane pane-detail">
-        {selectedId ? (
+        {pathSource ? (
+          <PathPanel
+            key={pathSource}
+            ctx={routing}
+            sourceId={pathSource}
+            sourceName={index.byId.get(pathSource)?.name ?? pathSource}
+            onClose={() => {
+              setPathSource(undefined);
+              setPathShown(undefined);
+            }}
+            onSelect={reveal}
+            shownFamily={pathShown?.family}
+            onShowPath={(family, ids) => {
+              setCenter("graph");
+              setPathShown((prev) => (prev?.family === family ? undefined : { family, ids }));
+              setRevealId(ids[0]);
+            }}
+          />
+        ) : selectedId ? (
           <DetailPanel
             model={model}
             index={index}
@@ -282,6 +354,11 @@ export function Workspace({
             }}
             onToggleExpand={toggleExpand}
             changes={compareGraph}
+            routing={routing}
+            onTracePath={(id) => {
+              setPathSource(id);
+              setPathShown(undefined);
+            }}
           />
         ) : comparison ? (
           <ChangeList diff={comparison.diff} onSelect={reveal} />

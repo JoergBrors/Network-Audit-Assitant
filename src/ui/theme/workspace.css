@@ -906,3 +906,204 @@ details.section > summary {
 .diff-after {
   color: var(--change-added);
 }
+
+/* --- Routing / path analysis --------------------------------------------------------------- */
+.path-form {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: var(--space-2);
+  align-items: end;
+  margin-bottom: var(--space-2);
+}
+
+.path-form label {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  gap: 2px;
+}
+
+.path-form input,
+.path-form select {
+  font: inherit;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  min-width: 0;
+}
+
+.path-form input[type="number"] {
+  width: 72px;
+}
+
+.gap-banner {
+  padding: var(--space-2);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--network-critical) 14%, var(--surface));
+  border: 1px solid var(--network-critical);
+  color: var(--network-critical);
+  font-weight: 700;
+  margin-bottom: var(--space-2);
+}
+
+.differences {
+  margin: 0 0 var(--space-2);
+  padding-left: 18px;
+}
+
+.path-columns {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-2);
+}
+
+.path-column {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+}
+
+.status-border-ALLOWED {
+  border-left-color: var(--change-added);
+}
+.status-border-BLOCKED {
+  border-left-color: var(--text-muted);
+}
+.status-border-UNKNOWN {
+  border-left-color: var(--network-warning);
+}
+.status-border-POTENTIAL_BYPASS {
+  border-left-color: var(--network-critical);
+}
+
+.path-status {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--surface);
+  background: var(--text-muted);
+  white-space: nowrap;
+}
+
+.path-status-ALLOWED {
+  background: var(--change-added);
+}
+.path-status-UNKNOWN {
+  background: var(--network-warning);
+}
+.path-status-POTENTIAL_BYPASS {
+  background: var(--network-critical);
+}
+.path-status-NA {
+  background: var(--border);
+  color: var(--text);
+}
+
+.hops {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+}
+
+.hop {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 4px;
+  padding: 4px 0;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+}
+
+.hop-icon {
+  text-align: center;
+  color: var(--accent);
+}
+
+.hop-firewall .hop-icon,
+.hop-nva .hop-icon {
+  color: var(--cat-security);
+}
+.hop-drop .hop-icon {
+  color: var(--network-critical);
+}
+.hop-internet .hop-icon {
+  color: var(--cat-edge);
+}
+
+.conf {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.conf-CONFIRMED {
+  color: var(--change-added);
+  border-color: var(--change-added);
+}
+.conf-LIKELY {
+  color: var(--network-ipv4);
+  border-color: var(--network-ipv4);
+}
+.conf-POSSIBLE,
+.conf-UNKNOWN {
+  color: var(--network-warning);
+  border-color: var(--network-warning);
+}
+
+.evidence summary {
+  cursor: pointer;
+}
+
+.evidence ul {
+  margin: 2px 0 0;
+  padding-left: 16px;
+}
+
+.react-flow__edge.edge-path .react-flow__edge-path {
+  stroke: var(--selection);
+  stroke-width: 4;
+}
+
+.react-flow__edge.edge-path {
+  opacity: 1;
+}
+
+.path-bar {
+  background: color-mix(in srgb, var(--selection) 10%, var(--surface));
+}
+
+.default-paths {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+
+.default-paths h2 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+tr.clickable {
+  cursor: pointer;
+}
+
+tr.clickable:hover td {
+  background: var(--surface-2);
+}

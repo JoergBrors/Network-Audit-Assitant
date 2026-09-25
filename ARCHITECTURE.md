@@ -1,6 +1,8 @@
 # ARCHITECTURE — Azure Network Audit Assistant
 
-Status: Entwurf Phase 2 · Stand 2026-09-25 · Schema-Version (geplant) `1.0.0`
+Status: freigegeben (Phase 2), fortgeschrieben 2026-09-25 nach Review · Export-Schema aktuell `0.6.0` (1.0.0 nach Abschluss der Analysephasen) · Umsetzungsstand je Phase: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
+
+Kennzeichnung in diesem Dokument: **[umgesetzt]**, **[teilweise]**, **[geplant]**.
 
 Dieses Dokument beschreibt die Zielarchitektur eines vollständig **read-only** arbeitenden Tools, das Azure-Netzwerklandschaften tenant- und subscriptionübergreifend inventarisiert, zu einem normalisierten Netzwerkgraphen rekonstruiert, IPv4/IPv6 gleichwertig analysiert (Schwerpunkt Dual-Stack-Gap-Analyse), Architektur-Findings mit Evidence erzeugt und als Snapshot/JSON/Draw.io exportiert.
 
@@ -20,16 +22,16 @@ Dieses Dokument beschreibt die Zielarchitektur eines vollständig **read-only** 
 | --- | --- | --- | --- |
 | `@azure/identity` | 4.13.3 | – | `DefaultAzureCredential`, `AzureCliCredential`, `ManagedIdentityCredential`, `WorkloadIdentityCredential`, `VisualStudioCodeCredential` |
 | `@azure/arm-resourcegraph` | 5.0.0 | `2024-04-01` | Primäre Discovery (`client.resources(QueryRequest)`) |
-| `@azure/arm-network` | 39.0.0 | `2026-01-01` | Gezielte Enrichment-GETs |
+| `@azure/arm-network` | 39.0.0 | `2026-01-01` | Enrichment-GETs (installiert, Nutzung ab Phase 5) |
 | `@azure/arm-resources-subscriptions` | 3.0.0 | `2022-12-01` | Tenants/Subscriptions (`tenants.list`, `subscriptions.list`) |
 | `@azure/msal-browser` | 5.23.0 | – | Anmeldung der Web-UI (Auth Code + PKCE) |
-| `@azure/arm-privatedns` | 4.0.0 | `2024-06-01` | Fallback für Record Sets |
-| `@azure/arm-dnsresolver` | 1.2.0 | `2025-05-01` | Fallback für Resolver-Kinder |
-| `@azure/arm-cdn` | 10.0.0 | `2025-12-01` | Front Door Standard/Premium (Origins, Routes) |
+| `@azure/arm-cdn` | 10.0.0 | `2025-12-01` | Front Door Standard/Premium (Origins, Routes) – installiert, Nutzung ab Phase 5 |
 | `@xyflow/react` | 12.12.0 | – | Topologie |
-| `elkjs` | 0.12.0 | – | Layout |
+| `elkjs` | 0.12.0 | – | Layout (`elk-api` + `elk-worker.min.js`) |
 | `zod` | 4.6.5 | – | Schema/Validierung |
 | `vitest` | 5.0.1 | – | Tests |
+
+Nicht installiert, weil nicht benötigt: `@azure/arm-privatedns` und `@azure/arm-dnsresolver` (Records und Resolver-Kinder liefert ARG), `@azure/msal-react`, Zustand.
 
 `QueryRequestOptions` in `@azure/arm-resourcegraph@5` bietet: `skipToken`, `top`, `skip`, `resultFormat`, `allowPartialScopes`, `authorizationScopeFilter`. `QueryResponse` liefert `totalRecords`, `count`, `resultTruncated`, `skipToken`, `data`.
 
@@ -51,6 +53,7 @@ Gegen den angemeldeten Tenant wurden ausschließlich aggregierende ARG-Abfragen 
 | Properties ohne Wert? | ARG lässt nicht gesetzte Properties weg (z. B. `addressPrefixes` fehlt, wenn nur `addressPrefix` gesetzt). | Normalisierung muss beide Formen (`addressPrefix` und `addressPrefixes`) zusammenführen. |
 
 Phase 3 hat die offenen Punkte gegen die offizielle ARG-Tabellenreferenz geklärt (Details: [RESOURCE-GRAPH-QUERIES.md](RESOURCE-GRAPH-QUERIES.md)):
+
 - **In ARG:** Management Groups (`resourcecontainers`, nur mit MG-Scope, live verifiziert), VMSS-NICs (`computeresources`, live verifiziert), Route-Server-/Hub-BGP-Connections (`virtualhubs/bgpconnections`), Private-DNS-AAAA-Records (`dnsresources`), **Azure Virtual Network Manager** (effektive Security Admin Rules, Connectivity- und Routing-Konfigurationen in `networkresources`).
 - **Nicht in ARG → ARM:** vWAN `hubVirtualNetworkConnections`, `routingIntent`, `hubRouteTables`; Front Door Standard/Premium Origin Groups/Origins/Routes/Security Policies; Diagnostic Settings.
 
@@ -75,7 +78,7 @@ Phase 3 hat die offenen Punkte gegen die offizielle ARG-Tabellenreferenz geklär
 
 ## 3. Systemübersicht
 
-```
+```text
             CLI (Node)                                        Web-UI (Browser, statische SPA)
 ┌─────────────────────────────────┐              ┌──────────────────────────────────────────────────┐
 │ auth/node: DefaultAzureCredential│              │ auth/browser: MSAL (Auth Code + PKCE)            │
@@ -115,6 +118,8 @@ Beide Auth-Wege liefern ein `TokenCredential` (`@azure/core-auth`). Discovery-Co
 
 ## 4. Read-only-Garantie
 
+**[umgesetzt]** `src/azure/http/readOnlyGuardPolicy.ts`, ESLint-Regel, Tests inkl. echter SDK-Clients.
+
 Alle Azure-SDK-Clients werden ausschließlich über eine Factory `createReadOnlyClient()` erzeugt, die eine **HTTP-Pipeline-Policy `readOnlyGuardPolicy`** (Position `perCall`) injiziert:
 
 - `GET` (und `HEAD`) → erlaubt.
@@ -135,7 +140,7 @@ Zusätzlich: ESLint-Regel (`no-restricted-syntax`) gegen Aufrufe von `begin*`, `
 - Konfiguration ausschließlich über Build-/Laufzeit-Konfiguration, keine fest codierten IDs:
   - `VITE_ENTRA_CLIENT_ID` (Pflicht): Application (client) ID der SPA-Registrierung.
   - `VITE_ENTRA_AUTHORITY` (optional): Default `https://login.microsoftonline.com/organizations`; für Single-Tenant-Registrierungen `https://login.microsoftonline.com/<tenantId>`.
-  - `redirectUri` = `window.location.origin` (muss als SPA-Redirect-URI registriert sein).
+  - `redirectUri` = `<origin>/redirect.html` **[umgesetzt]**: MSAL v5 verlangt eine eigene **Redirect-Bridge-Seite**, die nur `broadcastResponseToMainFrame()` ausführt und die Antwort an das Hauptfenster weiterreicht (`redirect.html` + `src/auth/browser/redirectBridge.ts`, als eigene Vite-Seite gebaut). Zeigt die Redirect-URI auf die App selbst, scheitert die Anmeldung mit `no_token_request_cache_error`. `postLogoutRedirectUri` = Startseite.
 - **Scope**: `https://management.azure.com/user_impersonation`. Das ist die einzige delegierte Berechtigung der Ressource *Azure Resource Manager* (AppId `797f4846-ba00-4fd7-ba43-dac1f8f63013`, Scope-ID `41094075-9dad-400e-a0bd-54e686782033`, Typ „User“: ein Benutzer kann ihr selbst zustimmen). Deckt ARM **und** Azure Resource Graph ab.
 - Anmeldung: `loginPopup` (Default) bzw. `loginRedirect` (Fallback bei Popup-Blockern). Token-Bezug: immer zuerst `acquireTokenSilent`; bei `InteractionRequiredAuthError` (abgelaufener Refresh Token nach 24 h für SPAs, Conditional Access, MFA) `acquireTokenPopup`.
 - **`MsalTokenCredential`** (`src/auth/browser`) implementiert `TokenCredential.getToken(scopes, { tenantId })` und setzt pro Tenant die Authority `https://login.microsoftonline.com/<tenantId>`. So erhält jeder Tenant sein eigenes, korrekt ausgestelltes Token (Home-Tenant, Gast-Tenants).
@@ -158,6 +163,7 @@ Zusätzlich: ESLint-Regel (`no-restricted-syntax`) gegen Aufrufe von `begin*`, `
 ### 5.4 Warum Read-only trotz `user_impersonation`
 
 ARM bietet **keinen** reinen Lese-Scope: `user_impersonation` erlaubt dem Token alles, was die Azure-RBAC-Rollen des Benutzers erlauben. Deshalb gilt Read-only auf drei Ebenen:
+
 1. **Technisch in der App**: `readOnlyGuardPolicy` (§ 4) blockiert jeden Nicht-Lese-Request, bevor er gesendet wird, in Browser und CLI.
 2. **Azure RBAC**: Empfohlen ist ein Konto bzw. eine Gruppe, die nur `Reader` hat.
 3. **Entra ID**: Optional „Assignment required“ an der Enterprise Application, damit nur freigegebene Benutzer das Tool verwenden können, plus Conditional Access.
@@ -179,41 +185,45 @@ Kein `Contributor`/`Owner`. Fehlende Rechte → `warnings[]` + `accessStatus: "n
 
 Einzelnes npm-Paket (keine Workspaces, reduziert Build-Komplexität); Schichtgrenzen werden per ESLint (`no-restricted-imports`) erzwungen.
 
-```
+```text
 src/
   auth/
-    browser/            MSAL-Konfiguration, MsalTokenCredential (TokenCredential), Login/Logout
-    node/               DefaultAzureCredential-Factory, Tenant-Wrapper
+    browser/            [umgesetzt] MSAL-Konfiguration, MsalTokenCredential, Session (Login/Logout), Redirect-Bridge
+    node/               [umgesetzt] DefaultAzureCredential & Co.
+    tenantCredential.ts [umgesetzt] tenant-gebundener TokenCredential-Wrapper
   azure/
-    http/               readOnlyGuardPolicy, Retry/Backoff, Throttling (x-ms-user-quota-*), Concurrency-Limiter
-    subscriptions/      Tenants, Subscriptions, Management Groups
-    resourceGraph/      ARG-Client, Query-Katalog (*.kql.ts), Paging, Subscription-Batching, Cache
-    arm/                Enrichment-Clients (network, privatedns, dnsresolver, cdn), Enrichment-Plan & Cache
-  discovery/            Pipeline-Orchestrierung → RawInventory + DiscoveryQuality + warnings
-  models/               Zod-Schemas + abgeleitete Typen (Raw, Normalized, Graph, Findings, Snapshot, Diff)
-  normalization/        Raw → NormalizedInventory (pro Ressourcentyp ein Normalizer), unclassified-Fallback
-  addressing/           IPv4/IPv6 CIDR-Arithmetik (bigint), Containment, Overlap, IP-Index, Klassifikation
-  graph/                NetworkGraph-Builder (Nodes/Edges/Relationships), Indizes
-  topology/             Hub/Spoke/Shared-Services/NVA-Heuristiken, Hierarchie (Tenant→Sub→Region→VNet→Subnet)
-  routing/              Effective-Route-Synthese, LPM, Path-Tracer, Egress-Resolver
-  security/             NSG-Evaluator, Firewall-Regel-Modell, Exposure-Analyse
-  dualstack/            Matrix, Gap-Erkennung, Readiness pro Kategorie
-  assessment/           Rule-Engine, Regelkatalog, ArchitectureGaps, AssessmentContext
-  snapshots/            Snapshot-Builder, kanonische Serialisierung, configurationHash, Import/Validierung
-  drift/                Semantic Diff, Drift-Klassifikation, Finding-Lifecycle, Timeline, Baseline
-  export/               JSON, Sanitizer, Draw.io, SVG, CSV
-  logging/              Strukturiertes Logging (JSON Lines), Redaction
-  utils/                Concurrency, stabile Sortierung, IDs
-  cli/                  commander-Kommandos
-  ui/                   React-App (Vite)
-    components/         Topology, TreeView, DetailPanel, Search, Filters, PathTrace, Compare, Dashboard, Drift
-    hooks/              useGraph, useSelection, useLayout (Worker), useFilters
-    state/              Zustand-Store (Selection, Filter, LOD, Expand-State)
-    workers/            elk.worker.ts, search.worker.ts
-    theme/              CSS-Tokens (--network-ipv4 …), Light/Dark
-tests/
-  fixtures/             Synthetische ARG-förmige Rohdaten (keine echten Tenantdaten)
-  scenarios/            Szenario-Builder für Akzeptanztests 1–7
+    http/               [umgesetzt] readOnlyGuardPolicy, ARG-Quota-Drossel, Client-Optionen (SDK-Retry)
+    subscriptions/      [umgesetzt] Tenants, Subscriptions (Lighthouse-Deduplizierung)
+    resourceGraph/      [umgesetzt] Query-Katalog (queries.ts), Runner (Paging, Batching, Split, Cache), Client
+    arm/                [geplant]   Enrichment-Plan & Clients (Phase 5)
+    cache.ts, errors.ts [umgesetzt] Cache-Interface/MemoryCache, Fehlerklassifikation
+  discovery/            [umgesetzt] Orchestrierung → RawInventory, DiscoveryQuality, Warnungen/Hinweise
+  models/               [umgesetzt] discovery.ts (Zod), graph.ts (Zod), network.ts (TS-Interfaces)
+  normalization/        [umgesetzt] Raw → NormalizedInventory, generische/unklassifizierte Ressourcen
+  addressing/           [teilweise] Familie, bigint-CIDR, Containment, Klassifikation
+  graph/                [umgesetzt] buildGraph.ts (Knoten/Kanten/LOD), view.ts (Sichtbarkeit, Filter, Kanten-Lifting)
+  topology/             [umgesetzt] Hub/Spoke/Shared/Standalone, NVA-Heuristik
+  pipeline/             [umgesetzt] analyze.ts: Normalisierung → Klassifikation → Graph (NetworkModel)
+  drift/                [teilweise] semantischer Diff, Drift-Kategorien, Vergleichsgraph, Diff-Export
+  export/               [teilweise] assessmentJson.ts (Export/Import); Draw.io/CSV/SVG/Sanitizer geplant
+  routing/              [geplant]   Effective-Route-Synthese, LPM, Path-Tracer, Egress-Resolver (Phase 9)
+  security/             [geplant]   NSG-/Firewall-Evaluator, Exposure (Phase 9)
+  dualstack/            [geplant]   Matrix, Gaps, Readiness (Phase 10)
+  assessment/           [geplant]   Rule-Engine, Regelkatalog, ArchitectureGaps (Phase 11)
+  snapshots/            [geplant]   configurationHash, Baseline, Migration (Phase 12)
+  logging/              [umgesetzt] JSON Lines, Redaction
+  utils/                [umgesetzt] Concurrency, Resource-ID-Helfer
+  cli/                  [teilweise] `discover`, Datei-Cache
+  ui/                   [teilweise] React-App (Vite)
+    App.tsx             Anmeldung, Discovery, Export/Import, Vergleich
+    components/         Discovery-Übersicht
+    graph/              TopologyView (React Flow), Knoten, ELK-Graph, LayoutClient
+    workspace/          Workspace, TreeView, DetailPanel, SearchBox, Changes (Vergleich), Download
+    theme/              CSS-Tokens (Light/Dark), Layout-CSS
+tests/                  [umgesetzt] Unit-/Integrationstests je Modul
+  fixtures/             synthetisches Hub-and-Spoke-Szenario im ARG-Format (keine Tenantdaten)
+scripts/                [umgesetzt] verify-arg-coverage.ts
+redirect.html           [umgesetzt] MSAL-Redirect-Bridge
 ```
 
 **Abhängigkeitsregel (erzwungen):** `ui` → `core`-Module; `core` (`models`…`export`) → keine Imports aus `azure`, `auth`, `cli`, `ui`, keine Node-Builtins. `azure`/`discovery` → `models`, `utils`, `logging`, keine Node-Builtins (Cache-Adapter werden injiziert). `auth/browser` nur aus `ui`, `auth/node` nur aus `cli`.
@@ -221,6 +231,8 @@ tests/
 ---
 
 ## 7. Discovery-Strategie (Azure Resource Graph first)
+
+**[umgesetzt]** mit folgenden Abweichungen: Retry/Backoff über die SDK-Retry-Policy; Management-Group-Abfrage ist optional und erzeugt bei Fehlern nur Hinweise (`warning.optional = true`), die die Konfidenz nicht senken.
 
 ### 7.1 Ablauf
 
@@ -236,6 +248,7 @@ tests/
 6. **Discovery Quality** wird parallel mitgeschrieben (§ 15).
 
 ### 7.2 Resilienz
+
 - Concurrency: globaler Limiter (Default ARG 4 parallel, ARM 8 parallel).
 - Retry: exponentieller Backoff mit Jitter für 429/5xx/`ECONNRESET`; `Retry-After` wird respektiert; ARG-Header `x-ms-user-quota-remaining`/`x-ms-user-quota-resets-after` steuern proaktives Drosseln.
 - Fehlerisolation pro (Tenant × Query × Batch). Ein 403 auf einem Batch → Aufsplitten bis zur einzelnen Subscription, um die unlesbare zu identifizieren.
@@ -271,6 +284,8 @@ tests/
 
 ## 8. ARM-Enrichment (nur für Lücken)
 
+**[teilweise]** (Phase 5). Umgesetzt in `src/azure/arm`: GET-only-`ArmReader` (Read-only-Guard, Retry, Token je Tenant, `nextLink`) und `runEnrichment` für vWAN-Hub-Details (E-VWAN-01…03) sowie Service-Tag-Präfixe (E-SVC-01, nur referenzierte Tags). Jeder Aufruf ist isoliert; 403/Fehler werden zu `EnrichmentResult` und Warnung, die Analyse senkt dann die Konfidenz (vWAN-Routen POSSIBLE statt LIKELY, nicht auflösbare Tags → UNKNOWN/POSSIBLE). Offen: Front Door, Diagnostic Settings, Fallbacks, Cache, Effective Routes.
+
 Der verbindliche Enrichment-Katalog (IDs `E-*`) steht in [RESOURCE-GRAPH-QUERIES.md § 11](RESOURCE-GRAPH-QUERIES.md). Kurzfassung:
 
 | Datenlücke | ARM-Call (read-only GET) |
@@ -287,7 +302,7 @@ Enrichment-Cache: Key `resourceId + etag` (sofern vorhanden) + apiVersion. Jeder
 
 ## 9. Normalisiertes Datenmodell
 
-Alle Typen werden als Zod-Schemas in `src/models` definiert; TypeScript-Typen werden per `z.infer` abgeleitet. Keine UI-Komponente sieht Rohdaten.
+Keine UI-Komponente sieht Rohdaten. **Ist-Stand:** Discovery- und Graph-Typen sind Zod-Schemas (`src/models/discovery.ts`, `src/models/graph.ts`); das normalisierte Inventar ist als TypeScript-Interfaces modelliert (`src/models/network.ts`), der Import prüft es strukturell. Die verbindliche Beschreibung des implementierten Modells steht in [NETWORK-GRAPH-MODEL.md](NETWORK-GRAPH-MODEL.md). Die folgenden Abschnitte beschreiben das **Zielmodell**; noch nicht umgesetzt sind `Evidence`, `Confidence`, `accessStatus`, `security`/`routing`-Zusammenfassungen und `findingIds` am Knoten (kommen mit Phasen 9–11).
 
 ### 9.1 Basis
 
@@ -314,7 +329,9 @@ interface Addressing {
 }
 ```
 
-### 9.2 NetworkGraph
+### 9.2 NetworkGraph (Zielmodell; implementierte Typen siehe NETWORK-GRAPH-MODEL.md)
+
+Abweichungen der Implementierung: Peerings, IP-Konfigurationen, NSG- und Firewall-Regeln sind keine eigenen Knoten, sondern Kanten bzw. Tabellen im Inventar; zusätzlich gibt es `externalResource` (nicht lesbare Ziele), `networkWatcher`, `flowLog`, `other`. Kantentypen `nextHop`/`associatedPublicIp` heißen `route`/`attached`; neu ist `monitoredBy`.
 
 ```ts
 type NodeType =
@@ -397,6 +414,8 @@ Zusätzlich zum Graph existiert `NormalizedInventory` (typisierte Listen: `vnets
 
 ## 10. IPv4/IPv6-Adressmodell & Klassifikation
 
+**[teilweise]** Umgesetzt: Familienerkennung, bigint-Parsing (inkl. `::`-Kompression, IPv4-mapped), Containment, Klassifikation, Default-Route-Erkennung (`src/addressing/ip.ts`); die Suche nutzt Containment. Offen: RFC-5952-Normalisierung, Overlap, IP-Index, Adresskategorien.
+
 - Eigene CIDR-Bibliothek auf `bigint` (IPv4 32 bit, IPv6 128 bit), ohne externe Abhängigkeit, vollständig getestet: Parsing (inkl. `::`-Kompression, IPv4-mapped), Normalisierung (Netzadresse, kanonische RFC-5952-Schreibweise), `contains`, `overlaps`, `lpm`.
 - **IP-Index**: Intervallbaum pro Familie über alle Präfixe (VNet, Subnet, Peering-Remote, PIP, PIPP, LNG, ER) und Host-Adressen (NIC, FW, LB-Frontend, PE) → beantwortet die globale IP-Suche (§ 43) in O(log n).
 - **Klassifikation** pro Ressource: aus `Addressing` abgeleitet; `unknown`, wenn die Quelle `not-accessible` ist. VNet-Klassifikation berücksichtigt Address Spaces; Subnet Prefixe; NIC IP-Konfigurationen (`privateIPAddressVersion`); NAT GW verbundene PIPs/PIPPs; Firewall IP-Konfigurationen.
@@ -405,6 +424,8 @@ Zusätzlich zum Graph existiert `NormalizedInventory` (typisierte Listen: `vnets
 ---
 
 ## 11. Topologie: Hub/Spoke- und NVA-Erkennung
+
+**[umgesetzt]** in `src/topology/classify.ts`. Die tatsächlich verwendeten Gewichte und Schwellen stehen in [NETWORK-GRAPH-MODEL.md § 5](NETWORK-GRAPH-MODEL.md); die Tabelle unten war der Startentwurf.
 
 ### 11.1 VNet-Klassifikation (gewichtete Heuristik, erklärbar)
 
@@ -427,11 +448,14 @@ Signale mit Gewichten (Startwerte, per Testfällen kalibriert):
 Algorithmus: (1) Hub-Kandidaten scoren, (2) Spokes relativ zu erkannten Hubs scoren, (3) Rest → Shared Services/Standalone/Unknown. `confidence = min(1, Σ Gewichte)`; `reasons[]` enthält jeden beitragenden Faktor als Klartext mit Zahlen. vWAN-Hubs (`virtualHub`) sind immer Hubs (Konfidenz 1.0).
 
 ### 11.2 NVA-Heuristik (VMs)
+
 `enableIPForwarding` (+0.35), Ziel eines UDR-`VirtualAppliance`-Next-Hops (+0.40), ≥ 2 NICs in verschiedenen Subnets (+0.15), Marketplace-Image eines bekannten Firewall-Publishers (+0.20), Backend eines Internal-LB, der als UDR-Next-Hop dient (+0.30, HA-NVA-Pattern). `potentialNva = confidence ≥ 0.5`.
 
 ---
 
 ## 12. Routing-Analyse
+
+**[teilweise]** Umgesetzt in `src/routing` und `src/security` (Details unten und in § 12.5): Routen-Synthese je Subnet und Familie, Routenauswahl, Path Tracer mit Hop-Evidence, NSG- und Firewall-Policy-Auswertung, Egress-Resolver, IPv4/IPv6-Vergleich, tenantweite Default-Pfad-Analyse, UI (Pfadanalyse, Internet-Pfade, effektive Routen) und Export. Zusätzlich: eingehende Pfade Internet → Workload, Virtual-WAN-Routing, AVNM (Security Admin Rules, Connected Groups), ECMP und Service-Tag-Präfixe. Offen: Effective-Routes-API (optional), vWAN Branch-/Hub-zu-Hub-Routing.
 
 ### 12.1 Effective-Route-Synthese (pro Subnet und Adressfamilie)
 
@@ -453,7 +477,7 @@ Eingabe: `source` (NIC, VM, Subnet, IP), `destination` (Ressource, IP, CIDR, `in
 
 Zustandsautomat mit Hop-Liste, max. 16 Hops, Zyklenerkennung:
 
-```
+```text
 Hop(Location) → Lookup effective route(destIP) →
   VnetLocal        → Ziel im selben VNet? → Delivered (NSG-Check Quelle-Out/Ziel-In)
   VNetPeering      → Remote-VNet; Ziel muss im Remote-Address-Space liegen (keine Transitivität) → weiter
@@ -486,19 +510,72 @@ interface PathHop {
 ```
 
 ### 12.3 Security-Auswertung im Pfad
+
 - **NSG**: vollständiger Evaluator (Priorität, Default Rules, Service Tags `Internet`, `VirtualNetwork`, `AzureLoadBalancer`; ASGs über NIC-Mitgliedschaft). Service Tags außer diesen drei → Konfidenz `LIKELY` (Präfixlisten nicht abgefragt).
 - **Azure Firewall**: Regelmodell aus Policy-Hierarchie (Parent → Child, RCG-Priorität, Collection-Priorität; DNAT → Network → Application). Evaluierung für IP-/Port-Ziele; FQDN-/Application-Regeln → `LIKELY`/`POSSIBLE`. IP-Groups werden aufgelöst. Nicht lesbare Policy → `UNKNOWN` mit Evidence `missing-data`.
 - Die Firewall wird primär als **Kontrollpunkt** bewertet („Pfad läuft durch Firewall ja/nein"); die Regelsemantik verfeinert, ersetzt aber nicht diese Aussage.
 
 ### 12.4 Egress-Resolver (pro Subnet, NIC und Familie)
+
 Reihenfolge nach Azure-Dokumentation: UDR → VirtualAppliance/Gateway ≫ NAT Gateway (nur wenn SKU die Familie unterstützt: IPv6 nur `StandardV2` mit IPv6-PIP/PIPP) ≫ Instance-Level-PIP der Familie ≫ LB-Outbound-Rule mit Frontend der Familie ≫ Default Outbound Access (nur IPv4 und nur wenn `defaultOutboundAccess != false`; IPv6: Verhalten in Phase 9 gegen Doku verifizieren, bis dahin `UNKNOWN`).
 Ergebnis: `EgressPath { family, mechanism: "firewall"|"nva"|"natGateway"|"instancePublicIp"|"lbOutbound"|"defaultOutbound"|"forcedTunnel"|"none"|"unknown", controlled: boolean, publicIps[], evidence[] }`.
 
 ---
 
+### 12.5 Umsetzung und belegte Plattformregeln (Stand 2026-09-25)
+
+| Regel | Quelle | Umsetzung |
+| --- | --- | --- |
+| Longest Prefix Match; bei gleicher Länge UDR > BGP > System; VNet-/Peering-Systemrouten gewinnen auch gegen spezifischere BGP-Routen | Microsoft Learn: *Virtual network traffic routing* | `selectRoute` |
+| Default-Systemrouten: Adressraum → VNet, `0.0.0.0/0` → Internet, RFC1918/100.64/10 und weitere reservierte Bereiche → None; None entfällt bei Überlappung mit dem Adressraum und bei `0.0.0.0/0` → Gateway | ebenda | `synthesizeRoutes` (None-Routen Konfidenz LIKELY) |
+| IPv6: `::/0` → Internet als System-Default | in der Doku nicht explizit tabelliert | Konfidenz LIKELY |
+| Per BGP gelernte Routen (VPN/ER/Route Server) sind in der Konfiguration nicht sichtbar | – | Gateway-Routen aus Local Network Gateways (POSSIBLE); System-Default POSSIBLE, wenn BGP-Gateways erreichbar und Propagation aktiv |
+| Egress-Vorrang: UDR zu Appliance/Gateway > NAT Gateway > Instance-PIP > LB-Outbound > Default Outbound | Microsoft Learn: *NAT Gateway overview* | `resolveEgress` |
+| NAT Gateway Standard nur IPv4; IPv6 nur StandardV2 | Microsoft Learn: *NAT Gateway SKUs* | Evidence im Egress |
+| Default Outbound nur für nicht-private Subnets; neue VNets seit 31.03.2026 privat; für IPv6 nicht dokumentiert | Microsoft Learn: *Default outbound access* | IPv4: `defaultOutbound`/`none`; IPv6 ohne explizite Methode: `unknown` |
+| Azure Firewall IPv6 (Preview): nur Network Rules und DNS-Proxy; keine Application-/DNAT-Regeln, IP Groups, vHub-Firewall | Microsoft Learn: *Deploy Azure Firewall in dual stack mode* | Firewall-Evaluator ignoriert für IPv6 IP Groups und Application Rules, Evidence-Hinweis |
+| VirtualAppliance-Next-Hop ohne IP-Forwarding an der NIC verwirft Pakete | Microsoft Learn: *Diagnose a VM routing problem* | Hop `drop` |
+| UDRs mit Service Tags: bei gleichem Präfix gewinnt die exakte (spezifischere) Tag-Route; explizite CIDR-Routen gewinnen bei gleicher Länge | Microsoft Learn: *Virtual network traffic routing – Service tags for user-defined routes* | Expansion über Service-Tag-API, `tagRank` |
+| ECMP: mehrere Next-Hop-IPs einer Route verteilen Flows | Route-Ressource `nextHop.nextHopIpAddresses` | Hop „ECMP (n Next Hops)“, alle Ziele als Kontrollen, Konfidenz POSSIBLE bei gemischten/unbekannten Zielen |
+| AVNM Security Admin Rules vor NSG: Deny beendet, Always Allow liefert ohne NSG-Prüfung, Allow → NSG | Microsoft Learn: *Security admin rules in AVNM* | `checkSecurity` (neuester Rule-Snapshot je Regel, nur für die Konfiguration des VNets) |
+| AVNM Connectivity (Mesh / Direct Connectivity) verbindet VNets ohne sichtbare Peerings | Microsoft Learn: *Connectivity configuration in AVNM* | Route `ConnectedGroup` (LIKELY) |
+| Virtual WAN: Routing Intent (Private/Internet) überschreibt Route-Table-Logik; ohne Intent assoziierte Hub Route Table + Propagation; `enableInternetSecurity` steuert 0/0 | Microsoft Learn: *Virtual hub routing*, *Routing intent* | `virtualWanRoutes` (LIKELY, POSSIBLE ohne Hub-Details) |
+| Virtual WAN und Secured-Hub-Firewall routen kein IPv6 | Microsoft Learn: *IPv6 in Virtual WAN* / Azure Firewall dual stack | keine vWAN-Routen für IPv6 |
+| Azure Firewall DNAT übersetzt auch die Quelle auf eine private Firewall-IP; Antworten müssen über die Firewall zurück | Microsoft Learn: *Filter inbound Internet traffic with Azure Firewall DNAT* | Inbound-Prüfung mit Firewall-IP als Quelle |
+| Eingang über Public IP/LB bei UDR 0/0 → Firewall erzeugt asymmetrisches Routing (Antworten werden verworfen) | Microsoft Learn: *Integrate Azure Firewall with Standard Load Balancer* | `asymmetricRouting`, Status UNKNOWN |
+
+**Path Tracer** (`tracePath`):
+- Quelle ist ein Subnet, eine NIC, eine VM, eine VM Scale Set oder ein Private Endpoint; Ziel ist das Internet (Stellvertreteradresse), eine IP oder eine Ressource.
+- Reihenfolge: NSG ausgehend (NIC, dann Subnet), dann je Subnet die effektive Route.
+- Je nach Next Hop:
+  - VNet oder Peering: Zustellung mit NSG eingehend (Subnet, dann NIC)
+  - Azure Firewall: Regelauswertung, SNAT, weiter aus dem Firewall-Subnet
+  - NVA oder ILB: IP-Forwarding-Prüfung, weiter aus dem NVA-Subnet, Status höchstens UNKNOWN
+  - Gateway: On-Premises bzw. Forced Tunneling
+  - Internet: Egress-Resolver
+- Schleifen werden erkannt, sowohl über wiederholte Subnets als auch über wiederholte Appliances.
+- `POTENTIAL_BYPASS`, wenn Internetverkehr ohne Sicherheitskontrolle austritt, obwohl der Hub des VNets eine Firewall oder NVA hat.
+- `compareFamilies` liefert Unterschiede und die „Architecture Gap“, wenn IPv4 kontrolliert und IPv6 unkontrolliert ist.
+
+**Eingehende Pfade** (`analyzeInbound`, `src/routing/inbound.ts`):
+- Eingänge: Instance-Public-IP an der NIC, Public Load Balancer (Regeln → Backend-Pool, Inbound NAT → NIC), Application Gateway (Listener → Backend-Pool; NSG sieht das AppGW-Subnet als Quelle; WAF = kontrolliert), Azure-Firewall-DNAT (Quelle = Firewall-IP, kontrolliert).
+- Je Eingang: AVNM + NSG eingehend (Subnet, dann NIC) für die relevanten Ports; Instance-PIPs gegen eine Liste typischer Ports (22, 3389, 80, 443, 445, 1433, 3306, 5432, 5985, 5986, 8080).
+- Ergebnis: offene Ports (beliebige Internet-Quelle), eingeschränkte Ports (nur explizite öffentliche Quellbereiche), Rückweg-Prüfung (asymmetrisches Routing), Status und Konfidenz.
+- Export: `assessmentContext.internetIngressPaths` und Gaps `IPV6_INBOUND_EXPOSURE`, `UNCONTROLLED_INBOUND_EXPOSURE`, `ASYMMETRIC_INBOUND_ROUTING`.
+
+**Realer Tenant** (aggregiert):
+- 175 Subnet-Pfade in 31 ms
+- 38 eingehende Pfade in 53 ms; 16 offen ohne zentrale Kontrolle, 14 mit asymmetrischem Rückweg
+- 66 IPv4-Subnets über Azure Firewall
+- 61 IPv4-Subnets in Spokes als potenzieller Bypass (keine Default-UDR, Default Outbound)
+- 2 NICs mit IPv6-Firewall-Bypass über Instance-Public-IPv6
+
 ## 13. Dual-Stack-Gap-Analyse
 
+**[geplant]** (Phase 10). Vorstufe umgesetzt: IP-Modi IPv4/IPv6/Dual Stack als Filter in der Topologie.
+
 ### 13.1 Matrix
+
 Pro VNet und Subnet wird eine `DualStackMatrix` erzeugt; jede Zeile hat für beide Familien einen Wert **und** Evidence:
 
 | Zeile | Quelle |
@@ -518,14 +595,18 @@ Pro VNet und Subnet wird eine `DualStackMatrix` erzeugt; jede Zeile hat für bei
 | Monitoring (Flow Logs/Diagnostic Settings auf den Kontrollpunkten) | Enrichment |
 
 ### 13.2 Gap-Erkennung
+
 Eine Gap entsteht, wenn eine Zeile für die „Referenzfamilie" (typischerweise IPv4) einen **kontrollierten** Zustand hat und die andere Familie **existiert** (Adressen vorhanden), aber einen schwächeren Zustand. Existiert die zweite Familie nicht, entsteht kein Security-Gap, sondern höchstens ein `ADDRESSING_GAP` (Info). Gap-Typen gemäß Lastenheft (`ADDRESSING_GAP` … `HIGH_AVAILABILITY_GAP`).
 
 ### 13.3 Readiness pro Kategorie
+
 `Addressing | Routing | Security | Egress | Ingress | DNS | Monitoring` → `READY | PARTIAL | NOT_READY | CRITICAL_GAP | UNKNOWN`, jeweils mit `evidence[]` und den zugrunde liegenden Gap-IDs. Regeln: kritisches Gap → `CRITICAL_GAP`; fehlende Daten in einer Kategorie → `UNKNOWN` (nie `READY`); gemischt → `PARTIAL`. **Kein Gesamtscore.**
 
 ---
 
 ## 14. Assessment Engine
+
+**[geplant]** (Phase 11).
 
 ```ts
 interface AssessmentRule {
@@ -563,8 +644,15 @@ interface Finding {
 
 ## 15. Discovery Quality & Warnings
 
+**[umgesetzt]** (`src/models/discovery.ts`, `src/discovery/quality.ts`); `armEnrichment` bleibt bis Phase 5 bei 0.
+
 ```ts
-interface DiscoveryWarning { resource?: string; scope?: string; operation: string; reason: "InsufficientPermissions" | "Throttled" | "NotFound" | "Truncated" | "TenantTokenUnavailable" | "Error"; detail?: string }
+interface DiscoveryWarning {
+  resource?: string; scope?: string; operation: string;
+  reason: "InsufficientPermissions" | "Throttled" | "NotFound" | "Truncated" | "TenantTokenUnavailable" | "SubscriptionDisabled" | "Error";
+  detail?: string;
+  optional?: boolean;   // optionale Daten (z. B. Management Groups): als Hinweis angezeigt, ohne Einfluss auf die Konfidenz
+}
 interface DiscoveryQuality {
   tenants: { total: number; readable: number };
   subscriptions: { total: number; readable: number };
@@ -579,16 +667,26 @@ interface DiscoveryQuality {
 
 ## 16. Snapshot, Drift & Baseline
 
+Details der Umsetzung: [SNAPSHOT-AND-DRIFT.md](SNAPSHOT-AND-DRIFT.md).
+
 ### 16.1 Snapshot = Export
+
+**[teilweise]** Umgesetzt: Export trägt `snapshotMetadata`, Import validiert per Zod und baut den Graphen deterministisch aus dem Inventar neu auf. Geplant: Migrationskette, Neuberechnung der Assessments.
+
 Jeder JSON-Export ist ein Snapshot (`schemaVersion`, `snapshotMetadata`, vollständiges normalisiertes Inventory, Graph, Analyse, Findings). Import validiert per Zod, migriert ältere `schemaVersion`s (Migrationskette) und berechnet Analyse/Assessment neu, wenn die Regelversion abweicht (beide Ergebnisse werden angezeigt).
 
 ### 16.2 configurationHash
-SHA-256 (Web Crypto, isomorph) über eine **kanonische Serialisierung** des normalisierten Inventories:
+
+**[geplant]** SHA-256 (Web Crypto, isomorph) über eine **kanonische Serialisierung** des normalisierten Inventories:
+
 - Objekt-Keys sortiert, Arrays nach stabiler ID bzw. Inhalt sortiert, Resource-IDs lowercase.
 - Ausgeschlossen (volatil): `provisioningState`, `etag`, `resourceGuid`, Zeitstempel, `generatedAt`, `snapshotId`, `peeringSyncLevel`-Übergangszustände, Discovery-Statistiken, Findings (werden separat als `findingsHash` gehasht).
 - Tags fließen in einen separaten `tagsHash` ein, damit Tag-Änderungen die Architektur-Identität nicht verändern, aber sichtbar bleiben.
 
 ### 16.3 Semantic Diff
+
+**[teilweise]** Umgesetzt sind 1 (Match über Resource-ID; ohne Namens-Fallback), 2 (generischer Feld-Diff auf dem normalisierten Modell; Listen mit `id`/`name` wie NSG-Regeln, Routen, Links werden je Element verglichen), 4 (Kategorien per Regeltabelle, ohne `EXPECTED`) sowie Beziehungsänderungen und Geister-Knoten für entfernte Ressourcen in der UI. Offen: 3 (abgeleitete Pfad-Änderungen, nach Phase 9), 5 (Finding-Lifecycle, nach Phase 11), Firewall-„relaxed“-Semantik.
+
 1. **Ressourcen-Match** über normalisierte Resource-ID; Fallback (bei Sanitization bzw. Re-Deployment) über `(type, subscription-pseudonym, name)`.
 2. **Typ-spezifische Differ** vergleichen fachliche Felder (nicht JSON-Pfade): VNet (Address Spaces je Familie), Subnet (Präfixe, NSG/RT/NAT-Zuordnung), Route Table (Routen nach Präfix gematcht → Next-Hop-Änderungen), NSG (Regeln nach Name, zusätzlich semantisch: effektiv geöffnete Exposure), Firewall/Policy (Regeln nach Collection/Name; „relaxed" = Menge erlaubter Tupel wächst), Peering (Flags), NAT (SKU, PIP-Familien), PIP, DNS, Gateways.
 3. **Abgeleitete Änderungen**: Vergleich der Default-Pfade/Egress-Pfade pro Subnet und Familie → „Firewall bypass introduced", „IPv6 bypass introduced", „Default Route changed to Internet", „NAT Gateway removed".
@@ -596,7 +694,8 @@ SHA-256 (Web Crypto, isomorph) über eine **kanonische Serialisierung** des norm
 5. **Finding-Lifecycle** über stabile Finding-IDs: `NEW`, `RESOLVED`, `EXISTING`, `CHANGED` (Severity/Confidence/Evidence geändert). Zusätzlich „Architecture Improvement", wenn ein Change mindestens ein Finding auflöst und keins einführt (Akzeptanztest 4).
 
 ### 16.4 Baseline & Timeline
-Ein Snapshot kann als `approvedBaseline` markiert werden (Flag + Metadaten in einer separaten Baseline-Datei, Snapshot selbst bleibt unverändert und hash-stabil). Timeline = sortierte Folge von Snapshots mit zusammengefassten Diff-Highlights.
+
+**[geplant]** Ein Snapshot kann als `approvedBaseline` markiert werden (Flag + Metadaten in einer separaten Baseline-Datei, Snapshot selbst bleibt unverändert und hash-stabil). Timeline = sortierte Folge von Snapshots mit zusammengefassten Diff-Highlights.
 
 ---
 
@@ -604,14 +703,17 @@ Ein Snapshot kann als `approvedBaseline` markiert werden (Flag + Metadaten in ei
 
 | Export | Erzeugung | Hinweise |
 | --- | --- | --- |
-| `azure-network-assessment-YYYYMMDD-HHMM.json` | `export/json` | Struktur exakt nach Lastenheft § 60 + `warnings`, `discoveryQuality`, `schemaVersion`; KI-freundlich: nur normalisierte Felder, keine ARM-Rohdaten |
-| `azure-network-diff-YYYYMMDD-HHMM.json` | `export/diff` | Struktur nach § 78 |
-| `.drawio` | `export/drawio` | unkomprimiertes `mxfile`/`mxGraphModel`-XML; Positionen aus derselben ELK-Layout-Pipeline; Layer (`mxCell parent="0"`): Azure Architecture, IPv4, IPv6, Routing, Security, Assessment Findings; Kantenstile je Beziehungstyp; Azure-Shapes aus der eingebauten diagrams.net-Bibliothek (`img/lib/azure2/...`) |
-| SVG | CLI: aus Layout direkt; UI: aus React Flow | |
-| PNG | UI (`html-to-image`) | CLI-PNG nicht vorgesehen (keine Headless-Browser-Abhängigkeit) |
-| CSV | `export/csv` | Ressourcen-Inventar |
+| `azure-network-assessment-YYYYMMDD-HHMM.json` | `export/assessmentJson.ts` **[teilweise]** | Struktur nach Lastenheft § 60 + `discovery` (Quality, Warnungen), `schemaVersion`, `metadata.coverage` (welche Analyseteile enthalten sind); nur normalisierte Felder, keine ARM-Rohdaten. Graph kompakt: Hierarchie über `parentId` (ohne `contains`-Kanten), Routen nur in `routes` (Routen-Kanten starten an der Route Table). |
+| `azure-network-diff-YYYYMMDD-HHMM.json` | `drift/diff.ts` **[umgesetzt]** | Struktur nach § 78; `newFindings`/`resolvedFindings` = `null` bis Phase 11 |
+| `.drawio` | `export/drawio` **[geplant]** | unkomprimiertes `mxfile`/`mxGraphModel`-XML; Positionen aus derselben ELK-Layout-Pipeline; Layer (`mxCell parent="0"`): Azure Architecture, IPv4, IPv6, Routing, Security, Assessment Findings; Kantenstile je Beziehungstyp; Azure-Shapes aus der eingebauten diagrams.net-Bibliothek (`img/lib/azure2/...`) |
+| SVG **[geplant]** | CLI: aus Layout direkt; UI: aus React Flow | |
+| PNG **[geplant]** | UI (`html-to-image`) | CLI-PNG nicht vorgesehen (keine Headless-Browser-Abhängigkeit) |
+| CSV **[geplant]** | `export/csv` | Ressourcen-Inventar |
 
 ### 17.1 Sanitization
+
+**[geplant]** Heute umgesetzt ist nur die Secret-Blocklist in der Normalisierung.
+
 - Deterministische Pseudonyme via HMAC-SHA-256 mit Schlüssel (`--sanitize-key` bzw. zufällig pro Export). Gleicher Schlüssel ⇒ vergleichbare sanitisierte Snapshots.
 - Tenant-/Subscription-IDs → pseudonyme GUIDs; Resource-Namen → `<typ>-<hash8>`; Resource-IDs werden konsistent umgeschrieben (Beziehungen bleiben erhalten).
 - Öffentliche IPs/Präfixe → **präfixerhaltende** Abbildung in Dokumentationsbereiche (IPv4 `198.18.0.0/15`, IPv6 `2001:db8::/32`), sodass Containment und Präfixlängen erhalten bleiben. Private Adressen (RFC1918, ULA) bleiben standardmäßig erhalten (Routinglogik), optional ebenfalls präfixerhaltend umschreibbar.
@@ -621,30 +723,40 @@ Ein Snapshot kann als `approvedBaseline` markiert werden (Flag + Metadaten in ei
 
 ## 18. UI-Architektur
 
-- **Stack**: React 19, Vite 8, `@xyflow/react` 12, `elkjs` im Web Worker, Zustand, TanStack Virtual (Tree/Listen), CSS-Custom-Properties als Theme-Tokens (`--network-ipv4`, `--network-ipv6`, `--network-dualstack`, `--network-warning`, `--network-critical`, `--network-hub`, `--network-spoke`, Light/Dark).
-- **Layout**: Drei Spalten — Tree View (links, virtualisiert), Topologie (Mitte, Mini-Map, Zoom, Fit View, Breadcrumb), Detail Panel (rechts). Dashboard, Findings, Path Trace, Compare, Drift als Tabs.
-- **Levels of Detail 1–5** gemäß Lastenheft; Knoten tragen `lod`, sichtbar ist `lod ≤ aktuelles Level` **und** expandierte Container. Subscriptions/Regionen als ELK-Compound-Nodes (Cluster), Hub zentral durch Layout-Constraints (Hub-Knoten mit höherer Priorität, `elk.layered` für Hub→Spoke, `elk.force`/`stress` alternativ).
-- **Performance**: Layout wird gecacht pro (Graph-Hash, LOD, Expand-Set, Filter) und nur bei strukturellen Änderungen neu berechnet; Selektion/Hover ändern kein Layout. `onlyRenderVisibleElements`, memoisierte Node-Komponenten, Aggregationskanten zwischen kollabierten Clustern (verhindert Spaghetti).
-- **IP-Modi** `IPv4 | IPv6 | Dual Stack | Compare`: steuern Knotenfarbe, sichtbare Adressen, Routing-Kanten (`family`), im Compare-Modus Split-Darstellung der Pfade.
-- **Tree ↔ Graph-Synchronisation** über gemeinsame `selectedNodeId` im Store; Tree-Klick expandiert Vorfahren im Graph und fokussiert (`fitView({ nodes })`).
-- **Suche**: Worker mit Namens-/ID-Index und IP-Index; IP/CIDR-Eingaben werden erkannt und liefern VNet, Subnet, NIC, PIP, Prefix und die mögliche Route (Path-Trace-Shortcut).
+**[teilweise]** Ist-Stand:
+
+- **Stack**: React 19 (lokaler Komponenten-State, kein Store), Vite 8, `@xyflow/react` 12, `elkjs` 0.12, CSS-Custom-Properties als Theme-Tokens (`--network-*`, `--cat-*`, `--edge-*`, `--change-*`, Light/Dark über `prefers-color-scheme`).
+- **Layout**: Drei Spalten – Tree View (links), Topologie mit Toolbar, Vergleichs- und Fokusleiste, Legende (Mitte), Detail-Panel bzw. Änderungsliste (rechts). Tabs „Topologie“ und „Übersicht & Qualität“.
+- **Levels of Detail 1–5**: Knoten tragen `lod`; sichtbar ist `lod ≤ Stufe` plus Kinder aufgeklappter Knoten (Doppelklick). Knoten mit sichtbaren Kindern werden zu Containern (Subscription → Region → VNet → Subnet). Beziehungen zu verborgenen Knoten werden zum nächsten sichtbaren Vorfahren hochgezogen und zusammengefasst („×n“). Grenze 1.500 sichtbare Elemente (Hinweis statt Graph).
+- **Fokus**: Teilbaum eines Elements plus direkt verbundene Elemente (maximal auf Ressourcenebene, Routen/Regeln werden zu Tabelle/Policy zusammengefasst).
+- **Layout**: ELK je Container getrennt (`SEPARATE_CHILDREN`): `layered` mit Coffman-Graham-Ebenenbegrenzung bei verbundenen Kindern, sonst `rectpacking`; Querbeziehungen werden auf der Ebene des kleinsten gemeinsamen Containers berücksichtigt. ELK läuft über `elk-api` im Hauptthread mit **ELKs eigenem** `elk-worker.min.js` als klassischem Web Worker (eingebunden per Vite `?url`). Ein eigener Worker mit `elk.bundled.js` funktioniert nicht, weil ELK sich in einer Worker-Umgebung selbst als Dispatcher registriert. Layout-Cache pro Struktur, 60-s-Timeout.
+- **Filter** (`src/graph/view.ts`): **IP-Modi** `Alle | IPv4 | IPv6 | Dual Stack` und **„Nur Änderungen“** (bei aktivem Vergleich) wirken gemeinsam: passende Komponenten normal, direkt verbundene und umschließende Komponenten als Kontext (blass, gestrichelt), übrige ausgeblendet; Kanten ohne passendes Ende als Hintergrund. Subscription-Filter.
+- **Tree ↔ Graph**: gemeinsame Auswahl; Auswahl im Baum, in der Suche oder in Links klappt die Vorfahren im Graphen auf und zentriert das Element.
+- **Suche**: Name, Resource ID, Resource Group, IP und CIDR (Containment: Adresse → NIC/VM, Subnet, VNet) im Hauptthread.
+- **Snapshot-Vergleich**: siehe [SNAPSHOT-AND-DRIFT.md](SNAPSHOT-AND-DRIFT.md).
+
+**[geplant]**: Dashboard-Kennzahlen (§ 58), weitere Filter (Region, Resource Group, Typ, Hub/Spoke, Severity), virtualisierter Baum, Such-Worker/IP-Index, IP-Modus **Compare** mit Pfad-Split (Phase 9), Path-Trace-, Findings- und Dual-Stack-Ansichten.
 
 ### 18.1 Anmeldung & Datenzugriff in der UI
-Statische SPA ohne Backend. `MsalProvider` umschließt die App; ohne Anmeldung sind nur Snapshot-Import und Offline-Analyse verfügbar. Nach Anmeldung: Tenant-Auswahl (aus `tenants.list`) → Discovery im Browser (Web Worker für Normalisierung/Analyse, Progress-Anzeige) → Ergebnis im Store. Der Discovery-Cache liegt nur im Arbeitsspeicher des Tabs (nur Ressourcendaten, keine Tokens) und wird beim Abmelden verworfen.
+
+Statische SPA ohne Backend. Ohne Anmeldung sind Import und Offline-Analyse verfügbar. Nach Anmeldung (MSAL-Popup, Redirect-Bridge) läuft die Discovery im Browser mit Fortschrittsanzeige über alle erreichbaren Tenants; Normalisierung und Graph (≈ 40 ms) laufen im Hauptthread. Der Discovery-Cache liegt nur im Arbeitsspeicher des Tabs (nur Ressourcendaten, keine Tokens) und wird beim Abmelden verworfen.
 
 ---
 
 ## 19. CLI
 
-```
-npm run discover -- [--tenant <id>] [--subscription <id>...] [--credential default|cli|vscode|mi|workload] [--out output/]
-npm run assess   -- --input output/network-inventory.json
-npm run export   -- --input <snapshot.json> --format json|drawio|svg|csv [--sanitize [--sanitize-key <k>]]
-npm run snapshot -- [discover-Flags]                         # discover + assess + snapshot in einem Schritt
-npm run diff     -- --from <a.json> --to <b.json> [--baseline]
+**[teilweise]** Umgesetzt:
+
+```bash
+npm run discover -- [--credential default|cli|vscode|mi|workload] [--tenant <id>]... [--subscription <id>]... \
+                    [--out output/] [--no-cache] [--no-management-groups] [--log-level debug|info|warn|error]
+npm run verify:arg -- [--credential cli] [--tenant <id>]    # ARG-Abdeckung (nur Aggregate)
 npm run dev | npm run build && npm run preview               # Web-UI (MSAL-Anmeldung)
 ```
-Ausgabe: `output/network-inventory.json`, `output/network-assessment.json` (Snapshot), `output/network-topology.drawio`. Exit-Codes: 0 ok, 2 Discovery unvollständig (Warnungen), 1 Fehler.
+
+Ausgabe von `discover`: `output/raw-inventory.json` (Rohdaten, nur lokal/Debug), `output/network-assessment.json` und `output/azure-network-assessment-YYYYMMDD-HHMM.json` (normalisierter Export = Snapshot). Logs als JSON Lines auf stderr. Exit-Codes: 0 vollständig, 2 abgeschlossen, aber unvollständig (Warnungen ohne Hinweise oder Konfidenz ≠ HIGH), 1 Fehler.
+
+**[geplant]**: `assess`, `export --format json|drawio|svg|csv [--sanitize]`, `snapshot`, `diff --from --to [--baseline]`.
 
 ---
 
@@ -671,5 +783,9 @@ Strukturiert (JSON Lines, Level `debug|info|warn|error`), Events: `discovery.sta
 | R11 | Azure Virtual Network Manager kann Konnektivität (Mesh) und Security Admin Rules außerhalb von Peerings/NSGs definieren. | Falsche Pfad- und Bypass-Aussagen, wenn AVNM ignoriert wird. | AVNM-Daten aus `networkresources` in Routing- und Security-Evaluator; ohne Daten Konfidenz nicht `CONFIRMED`. |
 | R12 | TypeScript 7 noch nicht von typescript-eslint unterstützt. | Toolchain-Bruch. | TS 6.0.x pinnen. |
 | R13 | Browser-Tokens (XSS, Supply-Chain im Frontend) mit `user_impersonation` können mehr als lesen, wenn der Benutzer Schreibrechte hat. | Missbrauch des Tokens außerhalb der App. | Strikte CSP, keine Inline-Skripte, `sessionStorage`-Cache, Abhängigkeiten gepinnt + `npm audit`, Empfehlung: Konten nur mit `Reader`, Enterprise App mit „Assignment required“ und Conditional Access. |
-| R15 | SPA-Refresh-Tokens gelten nur 24 h; Third-Party-Cookie-Blocking verhindert Silent Renew im iframe. | Erneute Anmeldung während langer Sitzungen. | `acquireTokenSilent` → bei `InteractionRequiredAuthError` Popup; Discovery ist wiederaufnehmbar (Cache). |
 | R14 | Definition of Done verlangt reale Azure-Tests. | CI kann das nicht leisten. | Automatisierte Tests mit Fixtures; manuelle Abnahme-Checkliste gegen realen Tenant (`docs/ACCEPTANCE.md`), plus optionaler `npm run test:live` (read-only, nur aggregierte Assertions). |
+| R15 | SPA-Refresh-Tokens gelten nur 24 h; Third-Party-Cookie-Blocking verhindert Silent Renew im iframe. | Erneute Anmeldung während langer Sitzungen. | `acquireTokenSilent` → bei `InteractionRequiredAuthError` Popup; Discovery ist wiederaufnehmbar (Cache). |
+| R16 | MSAL v5 erfordert eine Redirect-Bridge-Seite; falsche Redirect-URI führt zu `no_token_request_cache_error`. | Anmeldung scheitert. | **Eingetreten und behoben:** `redirect.html` als eigene Seite, Redirect-URI `<origin>/redirect.html`, dokumentiert in ENTRA-ID-SETUP. |
+| R17 | ELK in einem eigenen Web Worker beantwortet Anfragen nicht (registriert sich selbst als Dispatcher). | Layout hängt endlos. | **Eingetreten und behoben:** `elk-api` + `elk-worker.min.js`; Regressionstest simuliert den Worker-Scope; 60-s-Timeout. |
+| R18 | Größe des Exports (realer Tenant ~9 MB) für KI-Uploads. | Kontextgrenzen von KI-Werkzeugen. | Graph bereits kompakt (ohne `contains`-Kanten und Routen-Knoten); geplant: kompakte KI-Variante ohne Detailtabellen (Phase 14). |
+| R19 | Build-Größe des UI-Bundles (~900 kB, ELK-Worker 1,6 MB). | Ladezeit beim ersten Aufruf. | Code-Splitting (Lazy-Load der Topologie) in Phase 7-Restpunkten. |

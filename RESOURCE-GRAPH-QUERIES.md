@@ -1,6 +1,6 @@
 # RESOURCE-GRAPH-QUERIES — Query-Katalog
 
-Stand 2026-09-25 · ARG REST API `2024-04-01` (`@azure/arm-resourcegraph@5`) · Implementierung: `src/azure/resourceGraph/queries.ts` (dieses Dokument ist die Spezifikation, der Code ist die Quelle der Wahrheit für den exakten KQL-Text).
+Stand 2026-09-25 (Review: Katalog vollständig implementiert, ARM-Enrichment § 11 geplant) · ARG REST API `2024-04-01` (`@azure/arm-resourcegraph@5`) · Implementierung: `src/azure/resourceGraph/queries.ts` (dieses Dokument ist die Spezifikation, der Code ist die Quelle der Wahrheit für den exakten KQL-Text).
 
 ## 1. Verifikationsgrundlage
 
@@ -30,6 +30,7 @@ Notation unten: `$base` = Standardprojektion, `$order` = `| order by id asc`.
 ## 3. Organisation
 
 ### Q-ORG-01 Subscriptions & Resource Groups
+
 ```kusto
 resourcecontainers
 | where type in~ ('microsoft.resources/subscriptions', 'microsoft.resources/subscriptions/resourcegroups')
@@ -39,9 +40,11 @@ resourcecontainers
           managedByTenants = properties.managedByTenants
 | order by id asc
 ```
+
 Liefert u. a. `managementGroupAncestorsChain` (MG-Pfad je Subscription, live verifiziert) und `managedByTenants` (Lighthouse).
 
 ### Q-ORG-02 Management Groups (Scope: `managementGroups: [<tenantId>]`)
+
 ```kusto
 resourcecontainers
 | where type =~ 'microsoft.management/managementgroups'
@@ -49,7 +52,8 @@ resourcecontainers
           parent = tostring(properties.details.parent.id)
 | order by id asc
 ```
-Live verifiziert: liefert Ergebnisse nur mit Management-Group-Scope. Fehlt der Zugriff, entsteht die Warnung `InsufficientPermissions` und die MG-Hierarchie wird aus `mgChain` (Q-ORG-01) rekonstruiert, soweit möglich.
+
+Live verifiziert: liefert Ergebnisse nur mit Management-Group-Scope. Fehlt der Zugriff (beobachtet: `AccessDenied`, `BadRequest`), entsteht ein **Hinweis** (`optional: true`) ohne Einfluss auf die Konfidenz. Der MG-Pfad je Subscription kommt unabhängig davon aus `mgChain` (Q-ORG-01).
 
 ---
 
@@ -68,6 +72,7 @@ Live verifiziert: liefert Ergebnisse nur mit Management-Group-Scope. Fehlt der Z
 | Q-NET-SVCGW | resources | `servicegateways` | Neuer Typ (Subnet-Property `serviceGateway`); zunächst Typ + Beziehungen |
 
 KQL-Muster (für alle Zeilen oben identisch, nur die Typliste unterscheidet sich):
+
 ```kusto
 resources
 | where type in~ (<typliste>)
@@ -84,7 +89,7 @@ resources
 | Q-SEC-FWRCG | **networkresources** | `microsoft.network/firewallpolicies/rulecollectiongroups` | ✔ `priority`, `ruleCollections[]` (`name`, `ruleCollectionType`, `priority`, `action`, `rules[]` mit `ruleType`, `sourceAddresses`, `destinationAddresses`, `sourceIpGroups`, `destinationIpGroups`, `destinationPorts`, `destinationFqdns`, `ipProtocols`, **`ipv6Rule`**). Plausibilitätsprüfung: Die RCG-IDs aus `firewallpolicies.properties.ruleCollectionGroups` müssen alle gefunden werden, sonst ARM-Fallback E-FW-01. |
 | Q-SEC-WAF | resources | `applicationgatewaywebapplicationfirewallpolicies`, `frontdoorwebapplicationfirewallpolicies`, `microsoft.cdn/cdnwebapplicationfirewallpolicies` | Policy-Modus, verknüpfte Ressourcen |
 | Q-SEC-DDOS | resources | `ddosprotectionplans` | VNet-Zuordnung |
-| Q-SEC-AVNM | **networkresources** | `effectivesecurityadminrules`, `effectiveconnectivityconfigurations`, `networkgroupmemberships`, `virtualnetworks/subnets/effectiveroutingrules`, `networkmanagerconnections` | **Azure Virtual Network Manager**: Security Admin Rules werden *vor* NSGs ausgewertet und können Traffic unabhängig von NSGs erlauben oder blockieren; Connectivity Configurations (Mesh/Hub-Spoke) erzeugen Konnektivität **ohne** sichtbare VNet-Peerings; Routing Configurations erzeugen UDRs. Pflicht für eine korrekte Bypass-Analyse. |
+| Q-SEC-AVNM | **networkresources** | `effectivesecurityadminrules`, `effectiveconnectivityconfigurations`, `networkgroupmemberships`, `virtualnetworks/subnets/effectiveroutingrules`, `networkmanagerconnections`, `networkmanagers/securityadminconfigurations/rulecollections/rules/snapshots`, `networkmanagers/connectivityconfigurations/snapshots` | **Azure Virtual Network Manager**: Security Admin Rules werden *vor* NSGs ausgewertet und können Traffic unabhängig von NSGs erlauben oder blockieren; Connectivity Configurations (Mesh/Hub-Spoke) erzeugen Konnektivität **ohne** sichtbare VNet-Peerings; Routing Configurations erzeugen UDRs. Pflicht für eine korrekte Bypass-Analyse. |
 | Q-SEC-NSP | networkresources | `networksecurityperimeters/*` | Nur Inventar (PaaS-Perimeter), Beziehungen zu PEs |
 
 Die AVNM-Typen in `networkresources` sind in der Tabellenreferenz dokumentiert, im Test-Tenant aber nicht vorhanden. Die Property-Form wird beim ersten Treffer über die Verifikationsabfrage (§ 10) geprüft. Bis dahin normalisiert der Normalizer sie defensiv und kennzeichnet sie mit Konfidenz `LIKELY`.
@@ -117,6 +122,7 @@ Die AVNM-Typen in `networkresources` sind in der Tabellenreferenz dokumentiert, 
 | Q-DNS-REC | **dnsresources** | `privatednszones/{a,aaaa,cname,ptr,srv,txt,mx}`, `dnsforwardingrulesets/forwardingrules`, `dnsforwardingrulesets/virtualnetworklinks` | ✔ live (A, CNAME, SOA, Forwarding Rules, Ruleset-Links); AAAA laut Tabellenreferenz enthalten. Öffentliche `dnszones/*` werden bewusst **nicht** geladen (Volumen, kein Netzwerkpfadbezug), außer bei `--include-public-dns`. |
 
 Q-DNS-REC-Projektion:
+
 ```kusto
 dnsresources
 | where type in~ ('microsoft.network/privatednszones/a', 'microsoft.network/privatednszones/aaaa',
@@ -131,6 +137,7 @@ dnsresources
 ## 9. Compute (nur netzwerkrelevante Felder), Monitoring, Rest
 
 ### Q-CMP-VM
+
 ```kusto
 resources
 | where type =~ 'microsoft.compute/virtualmachines'
@@ -142,15 +149,19 @@ resources
           powerState = tostring(properties.extended.instanceView.powerState.code)
 | order by id asc
 ```
+
 `imageReference.publisher` und `plan` fließen in die NVA-Heuristik ein (bekannte Firewall-Publisher). `osProfile` wird bewusst nicht projiziert.
 
 ### Q-CMP-VMSS
+
 `microsoft.compute/virtualmachinescalesets` → `sku`, `orchestrationMode`, `virtualMachineProfile.networkProfile` (NIC-Templates, `enableIPForwarding`).
 
 ### Q-MON
+
 `networkwatchers`, `networkwatchers/flowlogs` (Ziel-NSG/VNet, `enabled`, Retention, Traffic Analytics), `networkwatchers/connectionmonitors`. Diagnostic Settings sind **nicht** in ARG → ARM E-MON-01.
 
 ### Q-NET-ALL (Vollständigkeit / `unclassifiedNetworkResources[]`)
+
 ```kusto
 resources
 | where type startswith 'microsoft.network/'
@@ -158,6 +169,7 @@ resources
 | project $base
 | order by id asc
 ```
+
 Dazu dieselbe Abfrage gegen `networkresources` für dort unbekannte Typen. Jeder Treffer landet unverändert, aber auf `$base` reduziert, in `unclassifiedNetworkResources[]`; der Graph erhält einen Knoten vom Typ `unclassified` mit `contains`-Kante zur Subscription/Resource Group und, falls `properties` Subnet- oder VNet-IDs referenzieren, `attached`-Kanten.
 
 ---
@@ -169,9 +181,11 @@ Die Datei `scripts/verify-arg-coverage.ts` führt ausschließlich aggregierende 
 ```kusto
 resources | where type startswith 'microsoft.network/' | summarize n = count() by type
 ```
+
 ```kusto
 resources | where type =~ '<typ>' | take 20 | mv-expand k = bag_keys(properties) | summarize n = count() by tostring(k)
 ```
+
 Ergebnis: je Typ die tatsächlich vorhandenen Property-Keys → Abgleich mit den Normalizern (fehlende erwartete Keys → Warnung im Entwicklungsreport).
 
 ---
@@ -185,6 +199,7 @@ Ergebnis: je Typ die tatsächlich vorhandenen Property-Keys → Abgleich mit den
 | E-VWAN-01 | Hub-VNet-Connections | `HubVirtualNetworkConnections.list(rg, hub)` | jeder `virtualHub` mit `virtualWan` |
 | E-VWAN-02 | Routing Intent | `RoutingIntentOperations.list(rg, hub)` | jeder vWAN-Hub |
 | E-VWAN-03 | Hub Route Tables | `HubRouteTables.list(rg, hub)` | jeder vWAN-Hub |
+| E-SVC-01 | Service-Tag-Präfixe | `GET /subscriptions/{sub}/providers/Microsoft.Network/locations/{location}/serviceTags` (Items-Key `values`) | mindestens ein Service Tag in NSG-, UDR-, Firewall- oder AVNM-Regeln referenziert; Ergebnis auf referenzierte Tags gefiltert |
 | E-FD-01 | AFD Origin Groups / Origins / Routes / Security Policies / Custom Domains | `@azure/arm-cdn`: `afdOriginGroups.listByProfile`, `afdOrigins.listByOriginGroup`, `routes.listByEndpoint`, `securityPolicies.listByProfile` | jedes `microsoft.cdn/profiles` mit SKU `*_AzureFrontDoor` |
 | E-MON-01 | Diagnostic Settings | `GET {id}/providers/Microsoft.Insights/diagnosticSettings?api-version=2021-05-01-preview` | Azure Firewall, NAT Gateway (StandardV2 Flow Logs), Application Gateway, VPN/ER-Gateways, Front Door |
 | E-RT-01 (optional, aus) | Effective Routes | `POST …/networkInterfaces/{nic}/effectiveRouteTable` (Allowlist) | `--effective-routes`, Custom Role |

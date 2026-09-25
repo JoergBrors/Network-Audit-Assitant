@@ -5,6 +5,9 @@ import { NetworkGraphSchema, type NetworkGraph } from "../models/graph.js";
 import type { NormalizedInventory } from "../models/network.js";
 import type { NetworkModel } from "../pipeline/analyze.js";
 import { architectureType } from "../topology/classify.js";
+import { buildRoutingContext } from "../routing/context.js";
+import { analyzeDefaultPaths, findIpv6Bypasses } from "../routing/analysis.js";
+import { analyzeInbound } from "../routing/inbound.js";
 
 export const TOOL_NAME = "azure-network-audit-assistant";
 export const TOOL_VERSION = "0.1.0";
@@ -17,7 +20,8 @@ export const EXPORT_COVERAGE = {
   graph: "complete",
   hubSpokeDetection: "complete",
   nvaDetection: "complete",
-  routingAnalysis: "not-yet-implemented",
+  routingAnalysis:
+    "configuration-based (UDRs, system routes, peerings, gateway prefixes; BGP-learned routes not visible)",
   dualStackAnalysis: "not-yet-implemented",
   assessmentFindings: "not-yet-implemented",
 } as const;
@@ -40,6 +44,36 @@ export function buildAssessmentExport(
   const spokes = vnets.filter((v) => v.topology?.classification === "spoke");
   const regions = [...new Set(vnets.flatMap((v) => (v.location ? [v.location] : [])))].sort();
   const count = (c: string) => vnets.filter((v) => v.ipClassification === c).length;
+  const routing = buildRoutingContext(inv);
+  const defaultPaths = analyzeDefaultPaths(inv, routing);
+  const bypasses = findIpv6Bypasses(inv, routing);
+  const inbound = analyzeInbound(routing);
+  const reachable = inbound.filter((e) => e.status !== "BLOCKED");
+  const compactPath = (p: (typeof defaultPaths)[number]) => ({
+    subnetId: p.subnetId,
+    subnet: p.subnet,
+    vnet: p.vnet,
+    status: p.status,
+    firstHop: p.firstHop,
+    egress: p.egress,
+    centrallyControlled: p.controlled,
+    securityControls: p.securityControls,
+    publicIps: p.publicIps,
+    confidence: p.confidence,
+  });
+  const egressSummary = (family: "ipv4" | "ipv6") => {
+    const list = defaultPaths.filter((p) => p.family === family);
+    const by: Record<string, number> = {};
+    for (const p of list) {
+      const key = `${p.egress}${p.controlled ? " (controlled)" : ""}`;
+      by[key] = (by[key] ?? 0) + 1;
+    }
+    return {
+      subnets: list.length,
+      byEgress: by,
+      potentialBypass: list.filter((p) => p.status === "POTENTIAL_BYPASS").length,
+    };
+  };
 
   return {
     metadata: {
@@ -110,6 +144,43 @@ export function buildAssessmentExport(
         hubIds: v.topology?.hubIds,
         confidence: v.topology?.confidence,
       })),
+      internetEgressPaths: { ipv4: egressSummary("ipv4"), ipv6: egressSummary("ipv6") },
+      ipv4DefaultPaths: defaultPaths.filter((p) => p.family === "ipv4").map(compactPath),
+      ipv6DefaultPaths: defaultPaths.filter((p) => p.family === "ipv6").map(compactPath),
+      internetIngressPaths: inbound.map((e) => ({
+        family: e.family,
+        entry: e.entry,
+        targetId: e.targetId,
+        target: e.targetName,
+        targetAddress: e.targetAddress,
+        status: e.status,
+        centrallyControlled: e.controlled,
+        openPorts: e.openPorts,
+        restrictedPorts: e.restricted,
+        asymmetricRouting: e.asymmetricRouting,
+        confidence: e.confidence,
+        summary: e.summary,
+      })),
+      knownArchitectureGaps: [
+        ...bypasses.map((b) => ({ type: "IPV6_FIREWALL_BYPASS", ...b })),
+        ...reachable
+          .filter((e) => !e.controlled && e.openPorts.length > 0)
+          .map((e) => ({
+            type: e.family === "ipv6" ? "IPV6_INBOUND_EXPOSURE" : "UNCONTROLLED_INBOUND_EXPOSURE",
+            targetId: e.targetId,
+            entry: e.entry.kind,
+            publicAddress: e.entry.publicAddress,
+            openPorts: e.openPorts,
+          })),
+        ...reachable
+          .filter((e) => e.asymmetricRouting)
+          .map((e) => ({
+            type: "ASYMMETRIC_INBOUND_ROUTING",
+            targetId: e.targetId,
+            entry: e.entry.kind,
+            publicAddress: e.entry.publicAddress,
+          })),
+      ],
     },
     addressing: {
       ipv4: {
@@ -190,6 +261,9 @@ function inventorySections(inv: NormalizedInventory) {
     dnsResolvers: inv.dnsResolvers,
     otherNetworkResources: inv.otherNetworkResources,
     unclassifiedNetworkResources: inv.unclassifiedNetworkResources,
+    virtualHubs: inv.virtualHubs,
+    serviceTags: inv.serviceTags,
+    avnm: inv.avnm,
   };
 }
 
@@ -200,7 +274,12 @@ const ImportSchema = z.looseObject({
   metadata: z.looseObject({ tool: z.literal(TOOL_NAME), schemaVersion: z.string().regex(/^0\./) }),
   discovery: z.object({ quality: DiscoveryQualitySchema, warnings: z.array(DiscoveryWarningSchema) }),
   graph: NetworkGraphSchema,
-  ...Object.fromEntries(Object.keys(inventorySections(emptyInventory())).map((k) => [k, section])),
+  ...Object.fromEntries(
+    Object.keys(inventorySections(emptyInventory()))
+      .filter((k) => k !== "avnm")
+      .map((k) => [k, k === "virtualHubs" || k === "serviceTags" ? section.optional() : section]),
+  ),
+  avnm: z.looseObject({}).optional(),
 });
 
 export class SnapshotImportError extends Error {
@@ -223,9 +302,15 @@ export function parseAssessmentExport(text: string): NetworkModel {
     );
   }
   const doc = parsed.data as unknown as AssessmentExport;
+  // Sections missing in older exports fall back to empty defaults.
+  const sections = Object.fromEntries(
+    Object.entries(inventorySections(doc as unknown as NormalizedInventory)).filter(
+      ([, v]) => v !== undefined,
+    ),
+  );
   const inventory = {
     ...emptyInventory(),
-    ...inventorySections(doc as unknown as NormalizedInventory),
+    ...sections,
     generatedAt: doc.snapshotMetadata?.generatedAt ?? doc.metadata.exportedAt,
   };
   // The exported graph is compact; the UI works on the full graph rebuilt from the inventory.
@@ -264,5 +349,8 @@ function emptyInventory(): NormalizedInventory {
     scaleSets: [],
     otherNetworkResources: [],
     unclassifiedNetworkResources: [],
+    virtualHubs: [],
+    serviceTags: [],
+    avnm: { adminRules: [], vnetAdminConfigurations: {}, connectedGroups: [] },
   };
 }

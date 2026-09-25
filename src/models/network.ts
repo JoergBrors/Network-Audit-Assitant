@@ -107,6 +107,8 @@ export interface RouteEntity {
   ipVersion: IpFamily | "serviceTag";
   nextHopType: string;
   nextHopIpAddress?: string | undefined;
+  /** VirtualApplianceEcmp: all next hop IPs (equal-cost multipath). */
+  nextHopIpAddresses?: string[] | undefined;
   defaultRoute: boolean;
   /** Resolved resource behind nextHopIpAddress, if known. */
   nextHopResourceId?: string | undefined;
@@ -152,6 +154,7 @@ export interface IpConfigurationEntity {
   publicIpId?: string | undefined;
   primary: boolean;
   loadBalancerBackendPoolIds: string[];
+  applicationSecurityGroupIds?: string[] | undefined;
 }
 
 export interface NicEntity extends BaseEntity {
@@ -213,6 +216,8 @@ export interface FirewallEntity extends BaseEntity {
   publicIpIds: string[];
   threatIntelMode?: string | undefined;
   virtualHubId?: string | undefined;
+  /** Secured virtual hub firewall: public IPs from hubIPAddresses. */
+  hubPublicIps: string[];
   dnsProxyEnabled?: boolean | undefined;
   classicRuleCollections: { application: number; network: number; nat: number };
 }
@@ -271,6 +276,22 @@ export interface LoadBalancerEntity extends BaseEntity {
   backendPools: { name: string; memberIds: string[] }[];
   loadBalancingRules: number;
   inboundNatRules: number;
+  rules: {
+    name: string;
+    protocol: string;
+    frontendPort?: number | undefined;
+    backendPort?: number | undefined;
+    frontendName?: string | undefined;
+    backendPool?: string | undefined;
+  }[];
+  natRules: {
+    name: string;
+    protocol: string;
+    frontendPort?: number | undefined;
+    backendPort?: number | undefined;
+    frontendName?: string | undefined;
+    targetId?: string | undefined;
+  }[];
   outboundRules: { name: string; frontendNames: string[]; backendPool?: string | undefined }[];
   probes: number;
   isPublic: boolean;
@@ -289,6 +310,8 @@ export interface ApplicationGatewayEntity extends BaseEntity {
   }[];
   backendPools: { name: string; addresses: string[]; memberIds: string[] }[];
   routingRules: number;
+  /** listener → backend pool mapping of request routing rules. */
+  routes: { name: string; listener?: string | undefined; backendPool?: string | undefined }[];
   wafPolicyId?: string | undefined;
   wafEnabled?: boolean | undefined;
 }
@@ -391,6 +414,73 @@ export interface GenericNetworkEntity extends BaseEntity {
   properties: Record<string, string | number | boolean | string[]>;
 }
 
+export interface ServiceTagEntity {
+  name: string;
+  prefixes: string[];
+}
+
+export interface HubConnectionEntity {
+  id: string;
+  name: string;
+  hubId: string;
+  remoteVnetId?: string | undefined;
+  enableInternetSecurity: boolean;
+  associatedRouteTableId?: string | undefined;
+  propagatedRouteTableIds: string[];
+  propagatedLabels: string[];
+  staticRoutes: { name: string; addressPrefixes: string[]; nextHopIpAddress?: string | undefined }[];
+}
+
+export interface HubRouteTableEntity {
+  id: string;
+  name: string;
+  labels: string[];
+  routes: {
+    name: string;
+    destinationType: string;
+    destinations: string[];
+    nextHopType: string;
+    nextHop: string;
+  }[];
+}
+
+export interface VirtualHubEntity extends BaseEntity {
+  virtualWanId?: string | undefined;
+  addressPrefix?: string | undefined;
+  addressPrefixV6?: string | undefined;
+  firewallId?: string | undefined;
+  sku?: string | undefined;
+  /** Routing intent: next hop resource per policy. */
+  routingIntent?: { internetNextHop?: string | undefined; privateNextHop?: string | undefined } | undefined;
+  connections: HubConnectionEntity[];
+  routeTables: HubRouteTableEntity[];
+  /** ARM enrichment status of connections/route tables/routing intent. */
+  detailStatus: "ok" | "partial" | "not-accessible" | "not-run";
+}
+
+export interface AvnmAdminRuleEntity {
+  id: string;
+  name: string;
+  /** Configuration (without snapshot suffix) the rule belongs to. */
+  configurationId: string;
+  priority: number;
+  access: "Allow" | "Deny" | "AlwaysAllow";
+  direction: "Inbound" | "Outbound";
+  protocol: string;
+  sources: string[];
+  destinations: string[];
+  sourcePorts: string[];
+  destinationPorts: string[];
+}
+
+export interface AvnmModel {
+  adminRules: AvnmAdminRuleEntity[];
+  /** VNet → effective security admin configuration IDs (without snapshot suffix). */
+  vnetAdminConfigurations: Record<string, string[]>;
+  /** Mesh / direct connectivity groups: VNets sharing an effective connectivity configuration. */
+  connectedGroups: { configurationId: string; topology: string; vnetIds: string[] }[];
+}
+
 export interface NormalizedInventory {
   generatedAt: string;
   tenants: { tenantId: string; displayName?: string | undefined; accessible: boolean }[];
@@ -428,4 +518,7 @@ export interface NormalizedInventory {
   /** Supported, but modelled generically (bastion, ExpressRoute, vWAN, WAF, flow logs, …). */
   otherNetworkResources: GenericNetworkEntity[];
   unclassifiedNetworkResources: GenericNetworkEntity[];
+  virtualHubs: VirtualHubEntity[];
+  serviceTags: ServiceTagEntity[];
+  avnm: AvnmModel;
 }

@@ -32,6 +32,7 @@ program
   .option("--out <dir>", "output directory", "output")
   .option("--no-cache", "bypass the discovery cache")
   .option("--no-management-groups", "skip management group discovery")
+  .option("--no-enrichment", "skip ARM enrichment (Virtual WAN details, service tag prefixes)")
   .addOption(
     new Option("--log-level <level>", "log level")
       .choices(["debug", "info", "warn", "error"])
@@ -45,6 +46,7 @@ program
       out: string;
       cache: boolean;
       managementGroups: boolean;
+      enrichment: boolean;
       logLevel: LogLevel;
     }) => {
       if (!isCredentialKind(opts.credential)) throw new InvalidArgumentError(opts.credential);
@@ -59,6 +61,7 @@ program
         logger,
         cache: opts.cache ? new FileCache(resolve(".cache", "discovery")) : undefined,
         includeManagementGroups: opts.managementGroups,
+        enrich: opts.enrichment,
         ...(opts.tenant ? { tenantIds: opts.tenant } : {}),
         ...(opts.subscription ? { subscriptionIds: opts.subscription } : {}),
       });
@@ -83,6 +86,7 @@ program
           `Subscriptions:     ${q.subscriptions.readable}/${q.subscriptions.total} readable`,
           `Network resources: ${q.networkResources}`,
           `ARG queries:       ${q.argQueries.executed} (${q.argQueries.pages} pages, ${q.argQueries.failed} failed, ${q.argQueries.truncated} truncated)`,
+          `ARM enrichment:    ${q.armEnrichment.successful}/${q.armEnrichment.attempted} calls ok, service tags: ${inventory.enrichment?.serviceTags?.tags.length ?? 0}`,
           `Warnings:          ${inventory.warnings.length}`,
           `Confidence:        ${q.overallConfidence}`,
           "",

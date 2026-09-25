@@ -17,6 +17,8 @@ import {
   type SubscriptionApi,
 } from "../azure/subscriptions/discoverSubscriptions.js";
 import { computeDiscoveryQuality } from "./quality.js";
+import { runEnrichment } from "../azure/arm/enrichment.js";
+import type { ArmReader } from "../azure/arm/armReader.js";
 
 export interface DiscoveryOptions {
   credential: TokenCredential;
@@ -27,16 +29,19 @@ export interface DiscoveryOptions {
   includeManagementGroups?: boolean;
   argConcurrency?: number;
   batchSize?: number;
+  /** Phase 5 ARM enrichment (Virtual WAN, service tags). Default: true. */
+  enrich?: boolean;
   onProgress?: (progress: DiscoveryProgress) => void;
   /** Test seams; production code uses the Azure SDK implementations. */
   subscriptionApi?: SubscriptionApi;
   argExecutorFactory?: (tenantId: string) => ArgExecutor;
+  armReaderFactory?: (tenantId: string) => ArmReader;
   queries?: readonly ArgQueryDefinition[];
   now?: () => Date;
 }
 
 export interface DiscoveryProgress {
-  phase: "subscriptions" | "resourceGraph" | "complete";
+  phase: "subscriptions" | "resourceGraph" | "enrichment" | "complete";
   completedQueries: number;
   totalQueries: number;
 }
@@ -125,12 +130,50 @@ export async function runDiscovery(options: DiscoveryOptions): Promise<RawInvent
   queryStats.sort((a, b) => a.queryId.localeCompare(b.queryId) || a.tenantId.localeCompare(b.tenantId));
 
   const allRows = Object.values(resources).flat();
+  const partial: RawInventory = {
+    generatedAt: now().toISOString(),
+    tenants: subs.tenants,
+    subscriptions: subs.subscriptions,
+    resources,
+    queryStats,
+    warnings,
+    quality: computeDiscoveryQuality({
+      tenants: subs.tenants,
+      subscriptions: subs.subscriptions,
+      resources: allRows,
+      queryStats,
+      warnings,
+    }),
+  };
+
+  let enrichment: RawInventory["enrichment"];
+  if (options.enrich !== false) {
+    options.onProgress?.({ phase: "enrichment", completedQueries: completed, totalQueries: jobs.length });
+    const result = await runEnrichment({
+      raw: partial,
+      credential,
+      logger,
+      ...(options.armReaderFactory ? { readerFactory: options.armReaderFactory } : {}),
+    });
+    enrichment = result.enrichment;
+    warnings.push(...result.warnings);
+  }
   const quality = computeDiscoveryQuality({
     tenants: subs.tenants,
     subscriptions: subs.subscriptions,
     resources: allRows,
     queryStats,
     warnings,
+    ...(enrichment
+      ? {
+          enrichment: {
+            attempted: enrichment.results.length,
+            successful: enrichment.results.filter((r) => r.status === "ok" || r.status === "notFound").length,
+            unavailable: enrichment.results.filter((r) => r.status === "forbidden" || r.status === "error")
+              .length,
+          },
+        }
+      : {}),
   });
   logger.info("discovery.complete", { resources: allRows.length, warnings: warnings.length, ...quality });
   options.onProgress?.({ phase: "complete", completedQueries: completed, totalQueries: jobs.length });
@@ -143,6 +186,7 @@ export async function runDiscovery(options: DiscoveryOptions): Promise<RawInvent
     queryStats,
     warnings,
     quality,
+    ...(enrichment ? { enrichment } : {}),
   };
 }
 

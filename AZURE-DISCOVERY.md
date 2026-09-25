@@ -1,10 +1,10 @@
 # AZURE-DISCOVERY — Discovery-Pipeline
 
-Stand 2026-09-25 · Queries: [RESOURCE-GRAPH-QUERIES.md](RESOURCE-GRAPH-QUERIES.md) · Anmeldung: [ENTRA-ID-SETUP.md](ENTRA-ID-SETUP.md)
+Stand 2026-09-25 (Review) · Umsetzungsstand: Schritte 1–5 und 8 umgesetzt, 6–7 (ARM-Enrichment) geplant · Queries: [RESOURCE-GRAPH-QUERIES.md](RESOURCE-GRAPH-QUERIES.md) · Anmeldung: [ENTRA-ID-SETUP.md](ENTRA-ID-SETUP.md)
 
 ## 1. Ablauf
 
-```
+```text
 TokenCredential (MSAL im Browser | DefaultAzureCredential in der CLI)
   │
   ├─ 1. Tenants            GET /tenants                                   (arm-resources-subscriptions)
@@ -19,6 +19,7 @@ TokenCredential (MSAL im Browser | DefaultAzureCredential in der CLI)
 ```
 
 Die Pipeline ist **isomorph**: dieselben Module laufen in Node (CLI) und im Browser (Web-UI). Umgebungsabhängig sind nur zwei injizierte Adapter:
+
 - `TokenCredential` (MSAL oder `DefaultAzureCredential`),
 - `DiscoveryCache` (Datei in `.cache/` für die CLI, In-Memory pro Browser-Tab für die Web-UI).
 
@@ -66,6 +67,8 @@ Jeder Fehler wird auf die kleinste Einheit begrenzt (Tenant → Batch → Subscr
 ```
 
 `reason`: `InsufficientPermissions | Throttled | NotFound | Truncated | TenantTokenUnavailable | SubscriptionDisabled | Error`.
+
+Fehler bei **optionalen Daten** (derzeit die Management-Group-Abfrage Q-ORG-02) werden mit `optional: true` markiert. Die UI zeigt sie als „Hinweise“, sie senken die Gesamt-Konfidenz nicht und setzen in der CLI keinen Exit-Code 2. Typischer Fall: Tenants ohne Leserecht auf die Root Management Group liefern `BadRequest` oder `AccessDenied`.
 
 ## 7. Discovery Quality
 

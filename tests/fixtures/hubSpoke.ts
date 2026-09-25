@@ -6,7 +6,7 @@ export const SUB_CONN = "22222222-2222-2222-2222-222222222222";
 export const SUB_APP = "33333333-3333-3333-3333-333333333333";
 
 const rg = (sub: string, name: string) => `/subscriptions/${sub}/resourceGroups/${name}`;
-const net = (sub: string, group: string, type: string, name: string) =>
+export const net = (sub: string, group: string, type: string, name: string) =>
   `${rg(sub, group)}/providers/Microsoft.Network/${type}/${name}`;
 
 export const HUB = net(SUB_CONN, "rg-hub", "virtualNetworks", "vnet-hub");
@@ -20,6 +20,7 @@ export const NSG_SPOKE = net(SUB_APP, "rg-app", "networkSecurityGroups", "nsg-sp
 export const NAT = net(SUB_CONN, "rg-hub", "natGateways", "nat-hub");
 export const PIP_NAT = net(SUB_CONN, "rg-hub", "publicIPAddresses", "pip-nat");
 export const PIP_VM = net(SUB_APP, "rg-app", "publicIPAddresses", "pip-vm6");
+export const PIP_FW = net(SUB_CONN, "rg-hub", "publicIPAddresses", "pip-fw");
 export const NIC_VM = net(SUB_APP, "rg-app", "networkInterfaces", "nic-vm1");
 export const NIC_PE = net(SUB_APP, "rg-app", "networkInterfaces", "pe-sql.nic.abc");
 export const PE = net(SUB_APP, "rg-app", "privateEndpoints", "pe-sql");
@@ -36,7 +37,7 @@ export const SNET_GW = `${HUB}/subnets/GatewaySubnet`;
 export const SNET_HUB_NAT = `${HUB}/subnets/snet-egress`;
 export const SNET_APP = `${SPOKE}/subnets/snet-app`;
 
-const res = (
+export const res = (
   id: string,
   type: string,
   properties: Record<string, unknown>,
@@ -56,7 +57,7 @@ const res = (
   };
 };
 
-const subnet = (id: string, prefixes: string[], props: Record<string, unknown> = {}) => ({
+export const subnet = (id: string, prefixes: string[], props: Record<string, unknown> = {}) => ({
   id,
   name: id.split("/").pop(),
   properties:
@@ -65,7 +66,7 @@ const subnet = (id: string, prefixes: string[], props: Record<string, unknown> =
       : { addressPrefixes: prefixes, ...props },
 });
 
-const peering = (vnet: string, remote: string, space: string[], flags: Record<string, boolean>) => ({
+export const peering = (vnet: string, remote: string, space: string[], flags: Record<string, boolean>) => ({
   id: `${vnet}/virtualNetworkPeerings/to-${remote.split("/").pop()}`,
   name: `to-${remote.split("/").pop()}`,
   properties: {
@@ -268,6 +269,16 @@ export function hubSpokeRaw(
           { sku: { name: "Standard" } },
         ),
         res(
+          PIP_FW,
+          "microsoft.network/publicipaddresses",
+          {
+            ipAddress: "198.51.100.20",
+            publicIPAddressVersion: "IPv4",
+            ipConfiguration: { id: `${FW}/azureFirewallIpConfigurations/ipconfig` },
+          },
+          { sku: { name: "Standard" } },
+        ),
+        res(
           PIP_VM,
           "microsoft.network/publicipaddresses",
           {
@@ -291,7 +302,14 @@ export function hubSpokeRaw(
           sku: { name: "AZFW_VNet", tier: "Premium" },
           firewallPolicy: { id: FW_POLICY },
           ipConfigurations: [
-            { name: "ipconfig", properties: { privateIPAddress: "10.0.1.4", subnet: { id: SNET_FW } } },
+            {
+              name: "ipconfig",
+              properties: {
+                privateIPAddress: "10.0.1.4",
+                subnet: { id: SNET_FW },
+                publicIPAddress: { id: PIP_FW },
+              },
+            },
           ],
         }),
       ],

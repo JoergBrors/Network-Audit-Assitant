@@ -47,7 +47,8 @@ describe("assessment JSON export", () => {
         "graph",
       ]),
     );
-    expect(doc.metadata.coverage.routingAnalysis).toBe("not-yet-implemented");
+    expect(doc.metadata.coverage.routingAnalysis).toContain("configuration-based");
+    expect(doc.metadata.coverage.dualStackAnalysis).toBe("not-yet-implemented");
   });
 
   it("describes the architecture for AI consumers", () => {
@@ -63,6 +64,25 @@ describe("assessment JSON export", () => {
       "fd00:11::/48",
     ]);
     expect(doc.summary).toMatchObject({ vnets: 3, dualStackVnets: 2, ipv4OnlyVnets: 1, hubs: 1, spokes: 1 });
+  });
+
+  it("contains default Internet paths per family and the IPv6 bypass gap", () => {
+    expect(doc.assessmentContext.ipv4DefaultPaths.find((p) => p.subnet === "snet-app")).toMatchObject({
+      egress: "firewall",
+      centrallyControlled: true,
+    });
+    expect(doc.assessmentContext.ipv6DefaultPaths.find((p) => p.subnet === "snet-app")).toBeDefined();
+    expect(doc.assessmentContext.knownArchitectureGaps).toEqual([
+      expect.objectContaining({
+        type: "IPV6_FIREWALL_BYPASS",
+        kind: "nic",
+        name: "nic-vm1",
+        ipv6: { status: "POTENTIAL_BYPASS", egress: "instancePublicIp" },
+      }),
+      expect.objectContaining({ type: "IPV6_INBOUND_EXPOSURE", entry: "publicIp", openPorts: [443] }),
+    ]);
+    expect(doc.assessmentContext.internetIngressPaths.length).toBeGreaterThan(0);
+    expect(doc.assessmentContext.internetEgressPaths.ipv4.subnets).toBe(2);
   });
 
   it("round-trips through import (offline snapshot)", () => {

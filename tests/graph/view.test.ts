@@ -55,7 +55,8 @@ describe("computeVisibleGraph", () => {
     expect(emphasis(F.NIC_VM)).toBe("match"); // dual-stack NIC
     expect(emphasis(F.PIP_VM)).toBe("match"); // public IPv6
     expect(emphasis(F.NSG_SPOKE)).toBe("context"); // attached to an IPv6 subnet, has no own addresses
-    expect(emphasis(F.RT_SPOKE)).toBe("context");
+    expect(emphasis(F.RT_SPOKE)).toBe("match"); // routes ::/0
+    expect(emphasis(F.NAT)).toBeUndefined(); // IPv4-only egress, unrelated to IPv6 components → hidden
     expect(emphasis(F.LONELY)).toBeUndefined(); // IPv4-only and unrelated → hidden
     expect(emphasis(F.PE)).toBeUndefined(); // IPv4-only private endpoint → hidden
     expect(emphasis(`/subscriptions/${F.SUB_APP}`)).toBe("context"); // container of matches

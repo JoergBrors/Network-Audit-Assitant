@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EXTERNAL_ROOT_ID, internetNodeId } from "../../src/graph/buildGraph.js";
+import { nodeMatchesMode } from "../../src/graph/view.js";
 import { NetworkGraphSchema } from "../../src/models/graph.js";
 import { analyzeInventory } from "../../src/pipeline/analyze.js";
 import * as F from "../fixtures/hubSpoke.js";
@@ -11,6 +12,21 @@ describe("buildGraph", () => {
   const node = (id: string) => graph.nodes.find((n) => n.id === lc(id));
   const edge = (type: string, s: string, t: string) =>
     graph.edges.find((e) => e.type === type && e.source === lc(s) && e.target === lc(t));
+
+  it("gives NAT gateways and route tables the families they serve (IP mode filter)", () => {
+    const nat = node(F.NAT)!;
+    expect(nat.addressing).toMatchObject({ ipv4: ["198.51.100.10"], ipv6: [], classification: "ipv4-only" });
+    expect(nodeMatchesMode(nat, "ipv4")).toBe(true);
+    expect(nodeMatchesMode(nat, "ipv6")).toBe(false);
+    // rt-spoke routes 0.0.0.0/0 and ::/0 (the Storage service tag route has no family).
+    const rt = node(F.RT_SPOKE)!;
+    expect(rt.addressing).toMatchObject({
+      ipv4: ["0.0.0.0/0"],
+      ipv6: ["::/0"],
+      classification: "dual-stack",
+    });
+    expect(nodeMatchesMode(rt, "dual")).toBe(true);
+  });
 
   it("is a valid, self-consistent graph", () => {
     expect(NetworkGraphSchema.safeParse(graph).success).toBe(true);

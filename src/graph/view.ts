@@ -16,6 +16,11 @@ export interface ViewState {
   changedIds?: ReadonlySet<string> | undefined;
   /** Show only changed components (plus related context). */
   onlyChanges?: boolean | undefined;
+  /**
+   * Path highlighting: these nodes (and their containers) are shown regardless of level of detail;
+   * everything else is hidden. Overrides the IP and change filters.
+   */
+  pathIds?: ReadonlySet<string> | undefined;
 }
 
 export interface VisibleNode {
@@ -202,6 +207,17 @@ export function computeVisibleGraph(index: GraphIndex, state: ViewState): Visibl
     for (const root of roots) if (byLevel(root) || state.expanded.has(root.id)) include(root, byLevel);
   }
 
+  // Path mode: path nodes and their ancestors are always visible.
+  if (state.pathIds) {
+    for (const id of state.pathIds) {
+      let current: string | undefined = index.byId.has(id) ? id : undefined;
+      while (current) {
+        visible.add(current);
+        current = index.byId.get(current)?.parentId;
+      }
+    }
+  }
+
   // Relationship edges are lifted to the nearest visible ancestors.
   const nearestVisible = (id: string): string | undefined => {
     let current: string | undefined = id;
@@ -229,9 +245,21 @@ export function computeVisibleGraph(index: GraphIndex, state: ViewState): Visibl
   // IP mode filter: keep matching components, their containers and directly related components
   // (as background context); everything else is hidden.
   const matches = new Set<string>();
-  const changeFilter = state.onlyChanges === true && state.changedIds !== undefined;
-  const filterActive = state.ipMode !== "all" || changeFilter;
-  if (filterActive) {
+  const pathFilter = state.pathIds !== undefined;
+  const changeFilter = !pathFilter && state.onlyChanges === true && state.changedIds !== undefined;
+  const filterActive = pathFilter || state.ipMode !== "all" || changeFilter;
+  if (pathFilter) {
+    for (const id of state.pathIds!) if (visible.has(id)) matches.add(id);
+    const keep = new Set(matches);
+    for (const id of [...keep]) {
+      let parent = index.byId.get(id)?.parentId;
+      while (parent && visible.has(parent)) {
+        keep.add(parent);
+        parent = index.byId.get(parent)?.parentId;
+      }
+    }
+    for (const id of [...visible]) if (!keep.has(id)) visible.delete(id);
+  } else if (filterActive) {
     // Changes hidden below the current level of detail are attributed to their nearest visible ancestor.
     const changedVisible = new Set<string>();
     if (changeFilter) {
