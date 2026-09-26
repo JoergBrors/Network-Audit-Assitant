@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeVisibleGraph, indexGraph, MAX_VISIBLE_NODES } from "../../src/graph/view.js";
+import { computeVisibleGraph, indexGraph } from "../../src/graph/view.js";
 import type { NetworkGraph } from "../../src/models/graph.js";
 import { analyzeInventory } from "../../src/pipeline/analyze.js";
 import * as F from "../fixtures/hubSpoke.js";
@@ -162,31 +162,12 @@ describe("computeVisibleGraph", () => {
     properties: {},
   });
 
-  it("reduces the level of detail instead of rendering nothing", () => {
+  it("renders large views completely (no size limit)", () => {
     const big = {
-      nodes: [
-        node("sub", 1),
-        ...Array.from({ length: MAX_VISIBLE_NODES + 1 }, (_, i) => node(`v${i}`, 2, "sub")),
-      ],
+      nodes: [node("sub", 1), ...Array.from({ length: 5000 }, (_, i) => node(`v${i}`, 2, "sub"))],
       edges: [],
     } as unknown as NetworkGraph;
     const v = computeVisibleGraph(indexGraph(big), { level: 2, expanded: new Set(), ipMode: "all" });
-    expect(v).toMatchObject({
-      truncated: true,
-      capped: false,
-      effectiveLevel: 1,
-      totalCandidates: MAX_VISIBLE_NODES + 2,
-    });
-    expect(v.nodes.map((n) => n.node.id)).toEqual(["sub"]);
-  });
-
-  it("caps the view when even the lowest level is too large", () => {
-    const big = {
-      nodes: Array.from({ length: MAX_VISIBLE_NODES + 1 }, (_, i) => node(`n${i}`, 1)),
-      edges: [],
-    } as unknown as NetworkGraph;
-    const v = computeVisibleGraph(indexGraph(big), { level: 1, expanded: new Set(), ipMode: "all" });
-    expect(v).toMatchObject({ truncated: true, capped: true, totalCandidates: MAX_VISIBLE_NODES + 1 });
-    expect(v.nodes).toHaveLength(MAX_VISIBLE_NODES);
+    expect(v.nodes).toHaveLength(5001);
   });
 });

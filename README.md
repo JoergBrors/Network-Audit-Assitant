@@ -29,7 +29,7 @@ npm run dev                  # http://localhost:5173
 | Funktion | Bedienung |
 | --- | --- |
 | Discovery | „Anmelden“ → „Discovery starten“: alle erreichbaren Tenants und Subscriptions über Azure Resource Graph, nur lesend |
-| Topologie | Detailstufe 1–5 (bei zu vielen Elementen automatisch reduziert), Elementtyp-Filter (z. B. nur VMs & PaaS, Hierarchie bleibt), Tag-Filter (`key=value`), Doppelklick = aufklappen (Drilldown), „Fokus“ im Detailbereich, Mini-Map, Zoom |
+| Topologie | Detailstufe 1–5 ohne Größenlimit (semantischer Zoom: Übersicht → Namen → Details beim Hineinzoomen), Elementtyp-Filter (z. B. nur VMs & PaaS, Hierarchie bleibt), Tag-Filter (`key=value`), Doppelklick = aufklappen (Drilldown), „Fokus“ im Detailbereich, Mini-Map, Zoom |
 | Baum | Tenant → Subscription → Region → VNet → Subnet → Ressourcen, synchron mit dem Graphen |
 | Details | Adressen, Hub/Spoke-Begründung, Beziehungen, Peerings, Routen, NSG-/Firewall-Regeln, DNS-Records, JSON |
 | Suche | Name, Resource ID, IP-Adresse oder CIDR (findet NIC/VM sowie enthaltendes Subnet/VNet) |

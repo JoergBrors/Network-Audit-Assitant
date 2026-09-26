@@ -3,6 +3,7 @@ import type { BaseEntity, PaasExposure, PaasServiceEntity, PublicNetworkAccess }
 import { PAAS_TYPE_INFO } from "../models/paasCatalog.js";
 import { normalizeId, refId } from "../utils/ids.js";
 import { arr, bool, obj, str, strings, type Obj } from "./access.js";
+import { buildPaasNetwork, LINK_HINTS, webConfigOf } from "./paasNetwork.js";
 
 type PaasRules = NonNullable<Enrichment["paasNetworkRules"]>[string];
 
@@ -103,13 +104,62 @@ function rangeRules(rules: unknown[]): string[] {
 const AZURE_SERVICES_RULE = "0.0.0.0";
 const OPEN_RANGES = new Set(["0.0.0.0-255.255.255.255", "0.0.0.0/0", "any", "*"]);
 
+/** Providers without an IP firewall in ARM: an enabled public endpoint is open to all networks. */
+const OPEN_WHEN_ENABLED = new Set([
+  "microsoft.storage/storageaccounts",
+  "microsoft.keyvault/vaults",
+  "microsoft.containerregistry/registries",
+  "microsoft.cognitiveservices/accounts",
+  "microsoft.web/staticsites",
+  "microsoft.datafactory/factories",
+  "microsoft.purview/accounts",
+  "microsoft.automation/automationaccounts",
+  "microsoft.insights/components",
+  "microsoft.operationalinsights/workspaces",
+  "microsoft.insights/privatelinkscopes",
+  "microsoft.dashboard/grafana",
+  "microsoft.recoveryservices/vaults",
+  "microsoft.cdn/profiles",
+  "microsoft.powerbidedicated/capacities",
+  "microsoft.app/managedenvironments",
+  "microsoft.signalrservice/signalr",
+  "microsoft.signalrservice/webpubsub",
+  "microsoft.apimanagement/service",
+  "microsoft.containerinstance/containergroups",
+  "microsoft.web/hostingenvironments",
+  "microsoft.desktopvirtualization/hostpools",
+  "microsoft.desktopvirtualization/workspaces",
+  "microsoft.machinelearningservices/workspaces",
+  "microsoft.databricks/workspaces",
+  "microsoft.devices/iothubs",
+]);
+
+/** Public endpoint enabled unless the property says otherwise. */
+const DEFAULT_ENABLED = new Set([
+  ...OPEN_WHEN_ENABLED,
+  "microsoft.search/searchservices",
+  "microsoft.documentdb/databaseaccounts",
+  "microsoft.servicebus/namespaces",
+  "microsoft.eventhub/namespaces",
+  "microsoft.cache/redis",
+  "microsoft.synapse/workspaces",
+  "microsoft.kusto/clusters",
+  "microsoft.logic/workflows",
+  "microsoft.appconfiguration/configurationstores",
+  "microsoft.eventgrid/topics",
+  "microsoft.eventgrid/domains",
+  "microsoft.batch/batchaccounts",
+]);
+
 function firewallOf(type: string, p: Obj, rules: PaasRules | undefined): PaasServiceEntity["firewall"] {
-  const acl = obj(p["networkAcls"] ?? p["networkRuleSet"]);
+  const acl = obj(ci(p, "networkAcls") ?? p["networkRuleSet"]);
   const ipValues = (list: unknown) =>
     arr(list).flatMap((r) => strings([obj(r)["value"] ?? obj(r)["ipAddressOrRange"] ?? obj(r)["ipMask"]]));
   const subnetValues = (list: unknown) =>
     arr(list).flatMap((r) => {
-      const id = normalizeId(str(obj(r)["id"]) ?? str(obj(r)["subnetId"]));
+      const id = normalizeId(
+        str(obj(r)["id"]) ?? str(obj(r)["subnetId"]) ?? str(obj(obj(r)["subnet"])["id"]),
+      );
       return id ? [id] : [];
     });
 
@@ -173,8 +223,8 @@ function firewallOf(type: string, p: Obj, rules: PaasRules | undefined): PaasSer
       };
     }
     case "microsoft.web/sites": {
-      const web = rules?.siteConfig.map((c) => obj(c)).find((c) => str(c["name"])?.toLowerCase() === "web");
-      const config = web ? obj(web["properties"]) : obj(p["siteConfig"]);
+      const web = webConfigOf(rules);
+      const config = web ?? obj(p["siteConfig"]);
       const restrictions = arr(config["ipSecurityRestrictions"]).map((r) => obj(r));
       if (!web && restrictions.length === 0) return { ipRules: [], subnetIds: [], source: "none" };
       const allows = restrictions.filter((r) => (str(r["action"]) ?? "Allow").toLowerCase() === "allow");
@@ -197,13 +247,119 @@ function firewallOf(type: string, p: Obj, rules: PaasRules | undefined): PaasSer
         source: web ? "arm" : "arg",
       };
     }
-    // No ACL object on these providers means "allow all networks".
-    case "microsoft.storage/storageaccounts":
-    case "microsoft.keyvault/vaults":
-    case "microsoft.containerregistry/registries":
-    case "microsoft.cognitiveservices/accounts":
-      return { defaultAction: "Allow", ipRules: [], subnetIds: [], source: "arg" };
+    case "microsoft.servicebus/namespaces":
+    case "microsoft.eventhub/namespaces": {
+      const set = obj(obj(rules?.extra?.["networkRuleSet"]?.[0])["properties"]);
+      if (!rules || rules.status === "not-accessible" || Object.keys(set).length === 0)
+        return { ipRules: [], subnetIds: [], source: "none" };
+      const ipRules = arr(set["ipRules"]).flatMap((r) =>
+        str(obj(r)["action"])?.toLowerCase() === "deny" ? [] : strings([obj(r)["ipMask"]]),
+      );
+      const subnetIds = subnetValues(set["virtualNetworkRules"]);
+      return {
+        // Without rules the namespace accepts all networks, whatever the default action says.
+        defaultAction:
+          ipRules.length || subnetIds.length ? (action(set["defaultAction"]) ?? "Allow") : "Allow",
+        ipRules,
+        subnetIds,
+        ...(bool(set["trustedServiceAccessEnabled"]) ? { bypass: "AzureServices" } : {}),
+        source: "arm",
+      };
+    }
+    case "microsoft.cache/redis": {
+      if (!rules || rules.status === "not-accessible") return { ipRules: [], subnetIds: [], source: "none" };
+      const ranges = rules.firewallRules.flatMap((r) => {
+        const rp = obj(obj(r)["properties"]);
+        const start = str(rp["startIP"]);
+        const end = str(rp["endIP"]);
+        return start ? [end && end !== start ? `${start}-${end}` : start] : [];
+      });
+      // Redis accepts every client until the first firewall rule exists.
+      return {
+        defaultAction: ranges.length ? "Deny" : "Allow",
+        ipRules: ranges,
+        subnetIds: [],
+        source: "arm",
+      };
+    }
+    case "microsoft.synapse/workspaces": {
+      if (!rules || rules.status === "not-accessible") return { ipRules: [], subnetIds: [], source: "none" };
+      const ranges = rangeRules(rules.firewallRules);
+      return {
+        defaultAction: ranges.some((r) => OPEN_RANGES.has(r)) ? "Allow" : "Deny",
+        ipRules: ranges.filter((r) => r !== "0.0.0.0-0.0.0.0"),
+        subnetIds: [],
+        ...(ranges.includes("0.0.0.0-0.0.0.0") ? { bypass: "AzureServices" } : {}),
+        source: "arm",
+      };
+    }
+    case "microsoft.app/containerapps": {
+      const ingress = obj(obj(p["configuration"])["ingress"]);
+      const list = arr(ingress["ipSecurityRestrictions"]).map((r) => obj(r));
+      const allows = list.filter((r) => str(r["action"])?.toLowerCase() !== "deny");
+      return {
+        // Allow rules deny everything else; deny-only rules allow everything else.
+        defaultAction: allows.length ? "Deny" : "Allow",
+        ipRules: allows.flatMap((r) => strings([r["ipAddressRange"]])),
+        subnetIds: [],
+        source: "arg",
+      };
+    }
+    case "microsoft.kusto/clusters": {
+      const ranges = strings(p["allowedIpRangeList"]);
+      return {
+        defaultAction: ranges.length ? "Deny" : "Allow",
+        ipRules: ranges,
+        subnetIds: [],
+        source: "arg",
+      };
+    }
+    case "microsoft.logic/workflows": {
+      const ranges = arr(obj(obj(p["accessControl"])["triggers"])["allowedCallerIpAddresses"]).flatMap((r) =>
+        strings([obj(r)["addressRange"]]),
+      );
+      return {
+        defaultAction: ranges.length ? "Deny" : "Allow",
+        ipRules: ranges,
+        subnetIds: [],
+        source: "arg",
+      };
+    }
+    case "microsoft.batch/batchaccounts": {
+      const account = obj(obj(p["networkProfile"])["accountAccess"]);
+      const ranges = arr(account["ipRules"]).flatMap((r) => strings([obj(r)["value"]]));
+      return {
+        defaultAction: action(account["defaultAction"]) ?? "Allow",
+        ipRules: ranges,
+        subnetIds: [],
+        source: "arg",
+      };
+    }
+    case "microsoft.devices/iothubs": {
+      const set = obj(p["networkRuleSets"]);
+      const ranges = arr(set["ipRules"]).flatMap((r) =>
+        str(obj(r)["action"])?.toLowerCase() === "reject" ? [] : strings([obj(r)["ipMask"]]),
+      );
+      return {
+        defaultAction: action(set["defaultAction"]) ?? (ranges.length ? "Deny" : "Allow"),
+        ipRules: ranges,
+        subnetIds: [],
+        source: "arg",
+      };
+    }
+    case "microsoft.machinelearningservices/workspaces": {
+      const ranges = strings(p["ipAllowlist"]);
+      return {
+        defaultAction: ranges.length ? "Deny" : "Allow",
+        ipRules: ranges,
+        subnetIds: [],
+        source: "arg",
+      };
+    }
     default:
+      // No ACL object on these providers means "allow all networks".
+      if (OPEN_WHEN_ENABLED.has(type))
+        return { defaultAction: "Allow", ipRules: [], subnetIds: [], source: "arg" };
       return { ipRules: [], subnetIds: [], source: "none" };
   }
 }
@@ -236,15 +392,41 @@ function publicAccessOf(type: string, p: Obj): PublicNetworkAccess {
     case "microsoft.apimanagement/service":
       if (str(p["virtualNetworkType"])?.toLowerCase() === "internal") return "Disabled";
       return access(p["publicNetworkAccess"]) ?? "Enabled";
-    // Storage accounts and Key Vaults are public unless explicitly disabled.
-    case "microsoft.storage/storageaccounts":
-    case "microsoft.keyvault/vaults":
-    case "microsoft.containerregistry/registries":
-    case "microsoft.cognitiveservices/accounts":
-    case "microsoft.search/searchservices":
-    case "microsoft.documentdb/databaseaccounts":
-      return access(p["publicNetworkAccess"]) ?? "Enabled";
+    case "microsoft.app/jobs":
+      return "Disabled";
+    case "microsoft.insights/components":
+    case "microsoft.operationalinsights/workspaces": {
+      const ingestion = access(p["publicNetworkAccessForIngestion"]) ?? "Enabled";
+      const query = access(p["publicNetworkAccessForQuery"]) ?? "Enabled";
+      return ingestion === "Disabled" && query === "Disabled" ? "Disabled" : "Enabled";
+    }
+    case "microsoft.insights/privatelinkscopes": {
+      const modes = obj(p["accessModeSettings"]);
+      const privateOnly = (v: unknown) => str(v)?.toLowerCase() === "privateonly";
+      return privateOnly(modes["ingestionAccessMode"]) && privateOnly(modes["queryAccessMode"])
+        ? "Disabled"
+        : "Enabled";
+    }
+    case "microsoft.desktopvirtualization/hostpools": {
+      // Clients reach the pool publicly unless restricted to session hosts only (or disabled).
+      const v = str(p["publicNetworkAccess"])?.toLowerCase() ?? "enabled";
+      return v === "enabled" || v === "enabledforclientsonly" ? "Enabled" : "Disabled";
+    }
+    case "microsoft.containerinstance/containergroups":
+      return str(obj(p["ipAddress"])["type"])?.toLowerCase() === "public" ? "Enabled" : "Disabled";
+    case "microsoft.web/hostingenvironments":
+      return (str(p["internalLoadBalancingMode"]) ?? "None").toLowerCase() === "none"
+        ? "Enabled"
+        : "Disabled";
+    case "microsoft.cdn/profiles":
+    case "microsoft.logic/workflows":
+      return "Enabled";
+    case "microsoft.fabric/capacities":
+    case "microsoft.fabric/privatelinkservicesforfabric":
+    case "microsoft.powerbi/privatelinkservicesforpowerbi":
+      return "Unknown";
     default:
+      if (DEFAULT_ENABLED.has(type)) return access(p["publicNetworkAccess"]) ?? "Enabled";
       return access(p["publicNetworkAccess"]) ?? "Unknown";
   }
 }
@@ -283,6 +465,12 @@ function vnetIntegrationOf(type: string, p: Obj): PaasServiceEntity["vnetIntegra
       return { subnetIds: ids(obj(p["virtualNetworkConfiguration"])["subnetResourceId"]), mode: "injection" };
     case "microsoft.app/managedenvironments":
       return { subnetIds: ids(obj(p["vnetConfiguration"])["infrastructureSubnetId"]), mode: "injection" };
+    case "microsoft.web/hostingenvironments":
+      return { subnetIds: ids(obj(p["virtualNetwork"])["id"]), mode: "injection" };
+    case "microsoft.containerinstance/containergroups":
+      return { subnetIds: ids(...arr(p["subnetIds"]).map((s) => obj(s)["id"])), mode: "injection" };
+    case "microsoft.kusto/clusters":
+      return { subnetIds: ids(obj(p["virtualNetworkConfiguration"])["subnetId"]), mode: "injection" };
     case "microsoft.databricks/workspaces": {
       const params = obj(p["parameters"]);
       const vnet = str(obj(params["customVirtualNetworkId"])["value"]);
@@ -385,6 +573,7 @@ export function normalizePaasService(
           .map((s) => s.trim())
           .filter(Boolean),
       ),
+      ...strings(p["outboundIpAddresses"]),
     ],
     minimumTlsVersion:
       str(p["minimumTlsVersion"]) ??
@@ -400,10 +589,15 @@ export function normalizePaasService(
     entity.privateEndpointIds.length === 0
   )
     entity.publicNetworkAccess = "Enabled";
+  if (refId(p["subnet"]) && entity.vnetIntegration.subnetIds.length === 0)
+    entity.vnetIntegration = { subnetIds: [refId(p["subnet"])!], mode: "injection" };
   const { exposure, reasons } = classifyExposure(entity);
   entity.exposure = exposure;
   entity.exposureReasons = reasons;
-  if (refId(p["subnet"]) && entity.vnetIntegration.subnetIds.length === 0)
-    entity.vnetIntegration = { subnetIds: [refId(p["subnet"])!], mode: "injection" };
+  const network = buildPaasNetwork(type, p, entity, rules);
+  entity.ingress = network.ingress;
+  entity.egress = network.egress;
+  entity.links = network.links;
+  LINK_HINTS.set(entity, network.hints);
   return entity;
 }

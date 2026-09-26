@@ -6,7 +6,8 @@ import {
   type IpFamily,
 } from "../addressing/ip.js";
 import type { RawInventory, RawResource } from "../models/discovery.js";
-import { PAAS_SERVICE_TYPES } from "../models/paasCatalog.js";
+import { PAAS_AUX_TYPES, PAAS_SERVICE_TYPES } from "../models/paasCatalog.js";
+import { linkPaasNetwork } from "./paasLinks.js";
 import { classifyExposure, normalizePaasService } from "./paas.js";
 import type {
   ApplicationGatewayEntity,
@@ -257,7 +258,10 @@ export function normalizeInventory(raw: RawInventory): NormalizedInventory {
   }
   inv.avnm = normalizeAvnm(byType);
 
-  resolveCrossReferences(inv);
+  resolveCrossReferences(
+    inv,
+    PAAS_AUX_TYPES.flatMap((t) => of(t)),
+  );
   sortInventory(inv);
   return inv;
 }
@@ -1089,7 +1093,7 @@ function normalizeGeneric(r: RawResource, kind: string): GenericNetworkEntity {
 // ---------------------------------------------------------------------------------------------
 // Cross references
 
-function resolveCrossReferences(inv: NormalizedInventory): void {
+function resolveCrossReferences(inv: NormalizedInventory, paasAuxRows: RawResource[] = []): void {
   const pips = new Map(inv.publicIps.map((p) => [p.id, p]));
   const prefixes = new Map(inv.publicIpPrefixes.map((p) => [p.id, p]));
 
@@ -1129,6 +1133,7 @@ function resolveCrossReferences(inv: NormalizedInventory): void {
       if (service && !service.privateEndpointIds.includes(pe.id)) service.privateEndpointIds.push(pe.id);
     }
   }
+  linkPaasNetwork(inv, paasAuxRows);
   for (const service of inv.paasServices) {
     service.privateEndpointIds.sort();
     const { exposure, reasons } = classifyExposure(service);

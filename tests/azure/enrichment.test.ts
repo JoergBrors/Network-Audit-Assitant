@@ -86,10 +86,14 @@ describe("ARM enrichment (phase 5)", () => {
     const sql = F.SQL;
     const web = F.net(F.SUB_APP, "rg-app", "sites", "app1").replace("Microsoft.Network", "Microsoft.Web");
     const privateSql = sql.replace("sql1", "sql-private");
+    const sb = `/subscriptions/${F.SUB_APP}/resourceGroups/rg-app/providers/Microsoft.ServiceBus/namespaces/sb1`;
+    const pool = `/subscriptions/${F.SUB_APP}/resourceGroups/rg-avd/providers/Microsoft.DesktopVirtualization/hostPools/hp1`;
     raw.resources["Q-PAAS"] = [
       F.res(sql, "microsoft.sql/servers", { publicNetworkAccess: "Enabled" }),
       F.res(privateSql, "microsoft.sql/servers", { publicNetworkAccess: "Disabled" }),
       F.res(web, "microsoft.web/sites", {}),
+      F.res(sb, "microsoft.servicebus/namespaces", {}),
+      F.res(pool, "microsoft.desktopvirtualization/hostpools", { publicNetworkAccess: "Disabled" }),
     ];
     const calls: { path: string; api: string }[] = [];
     const reader: ArmReader = {
@@ -99,7 +103,11 @@ describe("ARM enrichment (phase 5)", () => {
           return Promise.resolve([{ properties: { startIpAddress: "0.0.0.0", endIpAddress: "0.0.0.0" } }]);
         if (path.endsWith("/virtualNetworkRules"))
           return Promise.reject(restError(403, "AuthorizationFailed"));
-        if (path.endsWith("/config")) return Promise.resolve([{ name: "web", properties: {} }]);
+        // "Web Apps - Get Configuration" names the resource after the app, not "web".
+        if (path.endsWith("/config/web"))
+          return Promise.resolve([{ id: `${web}/config/web`, name: "app1", properties: {} }]);
+        if (path.endsWith("/networkRuleSets/default"))
+          return Promise.resolve([{ properties: { defaultAction: "Deny" } }]);
         return Promise.resolve([]);
       },
     };
@@ -110,14 +118,22 @@ describe("ARM enrichment (phase 5)", () => {
       readerFactory: () => reader,
     });
     const rules = enrichment.paasNetworkRules!;
-    expect(Object.keys(rules).sort()).toEqual([sql.toLowerCase(), web.toLowerCase()].sort());
+    expect(Object.keys(rules).sort()).toEqual(
+      [sql.toLowerCase(), web.toLowerCase(), sb.toLowerCase(), pool.toLowerCase()].sort(),
+    );
     expect(rules[sql.toLowerCase()]).toMatchObject({ status: "partial", firewallRules: [expect.anything()] });
     expect(rules[web.toLowerCase()]).toMatchObject({
       status: "ok",
-      siteConfig: [{ name: "web", properties: {} }],
+      siteConfig: [{ name: "app1", properties: {} }],
     });
+    expect(rules[sb.toLowerCase()]!.extra).toEqual({
+      networkRuleSet: [{ properties: { defaultAction: "Deny" } }],
+    });
+    // Session hosts are read even with the public endpoint disabled (they link the pool to its VMs).
+    expect(rules[pool.toLowerCase()]!.extra).toEqual({ sessionHosts: [] });
     expect(calls.find((c) => c.path === `${sql}/firewallRules`)!.api).toBe("2021-11-01");
-    expect(calls.find((c) => c.path === `${web}/config`)!.api).toBe("2023-12-01");
+    expect(calls.find((c) => c.path === `${web}/config/web`)!.api).toBe("2023-12-01");
+    expect(calls.find((c) => c.path === `${pool}/sessionHosts`)!.api).toBe("2024-04-03");
     expect(calls.some((c) => c.path.startsWith(privateSql))).toBe(false);
   });
 });

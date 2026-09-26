@@ -16,38 +16,91 @@ import { createArmReader, NETWORK_API_VERSION, type ArmReader } from "./armReade
 const BUILTIN_TAGS = new Set(["*", "any", "internet", "virtualnetwork", "azureloadbalancer"]);
 
 /** ARM collections with PaaS network rules (RESOURCE-GRAPH-QUERIES.md § 11, E-PAAS-01…03). */
-const PAAS_RULE_APIS: Record<
-  string,
-  {
-    label: string;
-    version: string;
-    calls: number;
-    firewallRules?: boolean;
-    virtualNetworkRules?: boolean;
-    siteConfig?: boolean;
-  }
-> = {
+interface PaasArmCall {
+  /** firewallRules / virtualNetworkRules / siteConfig, else stored under `extra[key]`. */
+  key: string;
+  /** Path below the resource ID. */
+  path: string;
+  version: string;
+  /** Items key of a list response; "" reads a single resource. */
+  itemsKey?: string;
+}
+
+/**
+ * ARM sub-resources with network settings Resource Graph does not return (Microsoft REST API
+ * reference per provider). `publicOnly`: only read while the public endpoint is enabled (rules
+ * that only filter public traffic).
+ */
+const PAAS_ARM_CALLS: Record<string, { label: string; publicOnly?: boolean; calls: PaasArmCall[] }> = {
   "microsoft.sql/servers": {
     label: "SqlServers",
-    version: "2021-11-01",
-    calls: 2,
-    firewallRules: true,
-    virtualNetworkRules: true,
+    publicOnly: true,
+    calls: [
+      { key: "firewallRules", path: "/firewallRules", version: "2021-11-01" },
+      { key: "virtualNetworkRules", path: "/virtualNetworkRules", version: "2021-11-01" },
+    ],
   },
   "microsoft.dbforpostgresql/flexibleservers": {
     label: "PostgreSqlFlexibleServers",
-    version: "2022-12-01",
-    calls: 1,
-    firewallRules: true,
+    publicOnly: true,
+    calls: [{ key: "firewallRules", path: "/firewallRules", version: "2022-12-01" }],
   },
   "microsoft.dbformysql/flexibleservers": {
     label: "MySqlFlexibleServers",
-    version: "2023-06-30",
-    calls: 1,
-    firewallRules: true,
+    publicOnly: true,
+    calls: [{ key: "firewallRules", path: "/firewallRules", version: "2023-06-30" }],
   },
-  "microsoft.web/sites": { label: "WebApps", version: "2023-12-01", calls: 1, siteConfig: true },
+  // Access restrictions (main + SCM) and outbound routing live in the site configuration.
+  "microsoft.web/sites": {
+    label: "WebApps",
+    calls: [{ key: "siteConfig", path: "/config/web", version: "2023-12-01", itemsKey: "" }],
+  },
+  "microsoft.servicebus/namespaces": {
+    label: "ServiceBusNamespaces",
+    publicOnly: true,
+    calls: [
+      {
+        key: "networkRuleSet",
+        path: "/networkRuleSets/default",
+        version: "2022-10-01-preview",
+        itemsKey: "",
+      },
+    ],
+  },
+  "microsoft.eventhub/namespaces": {
+    label: "EventHubsNamespaces",
+    publicOnly: true,
+    calls: [{ key: "networkRuleSet", path: "/networkRuleSets/default", version: "2024-01-01", itemsKey: "" }],
+  },
+  "microsoft.cache/redis": {
+    label: "Redis",
+    publicOnly: true,
+    calls: [{ key: "firewallRules", path: "/firewallRules", version: "2024-03-01" }],
+  },
+  "microsoft.synapse/workspaces": {
+    label: "SynapseWorkspaces",
+    publicOnly: true,
+    calls: [{ key: "firewallRules", path: "/firewallRules", version: "2021-06-01" }],
+  },
+  "microsoft.datafactory/factories": {
+    label: "DataFactories",
+    calls: [
+      { key: "managedVirtualNetworks", path: "/managedVirtualNetworks", version: "2018-06-01" },
+      { key: "integrationRuntimes", path: "/integrationRuntimes", version: "2018-06-01" },
+    ],
+  },
+  // Session hosts link the host pool to its VMs (and so to their subnets and egress path).
+  "microsoft.desktopvirtualization/hostpools": {
+    label: "HostPools",
+    calls: [{ key: "sessionHosts", path: "/sessionHosts", version: "2024-04-03" }],
+  },
+  "microsoft.web/hostingenvironments": {
+    label: "AppServiceEnvironments",
+    calls: [{ key: "networking", path: "/configurations/networking", version: "2023-12-01", itemsKey: "" }],
+  },
 };
+
+const RULE_FIELDS = new Set(["firewallRules", "virtualNetworkRules", "siteConfig"]);
 
 export interface EnrichmentOptions {
   raw: RawInventory;
@@ -204,10 +257,11 @@ export async function runEnrichment(
     };
   })();
 
-  // PaaS network rules that Resource Graph does not return (only where the public endpoint is on).
+  // PaaS network settings that Resource Graph does not return.
   const paasRows = (raw.resources["Q-PAAS"] ?? []).filter((r) => {
-    const type = r.type.toLowerCase();
-    if (!PAAS_RULE_APIS[type]) return false;
+    const api = PAAS_ARM_CALLS[r.type.toLowerCase()];
+    if (!api) return false;
+    if (!api.publicOnly) return true;
     const props = isObj(r.properties) ? r.properties : {};
     const network = isObj(props["network"]) ? props["network"] : {};
     const value = props["publicNetworkAccess"] ?? network["publicNetworkAccess"];
@@ -216,34 +270,29 @@ export async function runEnrichment(
   });
   const paasRules: NonNullable<Enrichment["paasNetworkRules"]> = {};
   const paasJobs = paasRows.map(async (r) => {
-    const api = PAAS_RULE_APIS[r.type.toLowerCase()]!;
+    const api = PAAS_ARM_CALLS[r.type.toLowerCase()]!;
     const tenantId = tenantOf(r);
-    const [firewallRules, virtualNetworkRules, siteConfig] = await Promise.all([
-      api.firewallRules
-        ? call(`${api.label}.firewallRules`, r.id, tenantId, `${r.id}/firewallRules`, "value", api.version)
-        : Promise.resolve([]),
-      api.virtualNetworkRules
-        ? call(
-            `${api.label}.virtualNetworkRules`,
-            r.id,
-            tenantId,
-            `${r.id}/virtualNetworkRules`,
-            "value",
-            api.version,
-          )
-        : Promise.resolve([]),
-      api.siteConfig
-        ? call(`${api.label}.config`, r.id, tenantId, `${r.id}/config`, "value", api.version)
-        : Promise.resolve([]),
-    ]);
-    const parts = [firewallRules, virtualNetworkRules, siteConfig];
-    const failed = parts.filter((x) => x === undefined).length;
-    paasRules[r.id.toLowerCase()] = {
-      firewallRules: firewallRules ?? [],
-      virtualNetworkRules: virtualNetworkRules ?? [],
-      siteConfig: siteConfig ?? [],
-      status: failed === 0 ? "ok" : failed === api.calls ? "not-accessible" : "partial",
+    const values = await Promise.all(
+      api.calls.map((c) =>
+        call(`${api.label}.${c.key}`, r.id, tenantId, `${r.id}${c.path}`, c.itemsKey ?? "value", c.version),
+      ),
+    );
+    const entry: NonNullable<Enrichment["paasNetworkRules"]>[string] = {
+      firewallRules: [],
+      virtualNetworkRules: [],
+      siteConfig: [],
+      status: "ok",
     };
+    const extra: Record<string, unknown[]> = {};
+    api.calls.forEach((c, i) => {
+      const v = values[i] ?? [];
+      if (RULE_FIELDS.has(c.key)) entry[c.key as "firewallRules" | "virtualNetworkRules" | "siteConfig"] = v;
+      else extra[c.key] = v;
+    });
+    if (Object.keys(extra).length) entry.extra = extra;
+    const failed = values.filter((v) => v === undefined).length;
+    entry.status = failed === 0 ? "ok" : failed === api.calls.length ? "not-accessible" : "partial";
+    paasRules[r.id.toLowerCase()] = entry;
   });
 
   await Promise.all([...hubJobs, tagJob, ...paasJobs]);

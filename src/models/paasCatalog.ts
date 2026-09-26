@@ -3,7 +3,18 @@
  * that the discovery reads (RESOURCE-GRAPH-QUERIES.md § 8a). Types are lowercase ARM types.
  */
 export type PaasCategory =
-  "storage" | "database" | "web" | "security" | "integration" | "ai" | "containers" | "analytics" | "other";
+  | "storage"
+  | "database"
+  | "web"
+  | "security"
+  | "integration"
+  | "ai"
+  | "containers"
+  | "analytics"
+  | "vdi"
+  | "edge"
+  | "monitoring"
+  | "other";
 
 export interface PaasServiceType {
   type: string;
@@ -76,8 +87,55 @@ export const PAAS_SERVICE_TYPES: readonly PaasServiceType[] = [
   { type: "microsoft.synapse/workspaces", label: "Synapse Workspace", category: "analytics" },
   { type: "microsoft.databricks/workspaces", label: "Databricks", category: "analytics" },
   { type: "microsoft.purview/accounts", label: "Purview", category: "analytics" },
-  { type: "microsoft.insights/components", label: "Application Insights", category: "other" },
-  { type: "microsoft.operationalinsights/workspaces", label: "Log Analytics Workspace", category: "other" },
+  { type: "microsoft.web/hostingenvironments", label: "App Service Environment", category: "web" },
+  { type: "microsoft.logic/workflows", label: "Logic App (Consumption)", category: "integration" },
+  { type: "microsoft.signalrservice/webpubsub", label: "Web PubSub", category: "integration" },
+  { type: "microsoft.devices/iothubs", label: "IoT Hub", category: "integration" },
+  { type: "microsoft.app/jobs", label: "Container Apps Job", category: "containers" },
+  {
+    type: "microsoft.containerinstance/containergroups",
+    label: "Container Instances",
+    category: "containers",
+  },
+  { type: "microsoft.kusto/clusters", label: "Azure Data Explorer", category: "analytics", sensitive: true },
+  { type: "microsoft.fabric/capacities", label: "Fabric Capacity", category: "analytics" },
+  {
+    type: "microsoft.fabric/privatelinkservicesforfabric",
+    label: "Fabric Private Link (Tenant)",
+    category: "analytics",
+  },
+  {
+    type: "microsoft.powerbi/privatelinkservicesforpowerbi",
+    label: "Power BI Private Link (Tenant)",
+    category: "analytics",
+  },
+  { type: "microsoft.powerbidedicated/capacities", label: "Power BI Embedded", category: "analytics" },
+  { type: "microsoft.batch/batchaccounts", label: "Batch Account", category: "other" },
+  { type: "microsoft.recoveryservices/vaults", label: "Recovery Services Vault", category: "security" },
+  { type: "microsoft.desktopvirtualization/hostpools", label: "AVD Host Pool", category: "vdi" },
+  { type: "microsoft.desktopvirtualization/workspaces", label: "AVD Workspace", category: "vdi" },
+  { type: "microsoft.cdn/profiles", label: "Front Door / CDN", category: "edge" },
+  { type: "microsoft.dashboard/grafana", label: "Managed Grafana", category: "monitoring" },
+  { type: "microsoft.insights/components", label: "Application Insights", category: "monitoring" },
+  {
+    type: "microsoft.operationalinsights/workspaces",
+    label: "Log Analytics Workspace",
+    category: "monitoring",
+  },
+  {
+    type: "microsoft.insights/privatelinkscopes",
+    label: "Azure Monitor Private Link Scope",
+    category: "monitoring",
+  },
+];
+
+/**
+ * Child resources read with the PaaS query to complete their parent (not services of their own):
+ * Front Door endpoints (host names), AVD application groups (host pool ↔ workspace).
+ */
+export const PAAS_AUX_TYPES: readonly string[] = [
+  "microsoft.cdn/profiles/afdendpoints",
+  "microsoft.desktopvirtualization/applicationgroups",
 ];
 
 export const PAAS_TYPE_INFO = new Map(PAAS_SERVICE_TYPES.map((t) => [t.type, t]));
@@ -130,4 +188,15 @@ export const PRIVATE_LINK_ZONES: Record<string, string[]> = {
   sqlondemand: ["privatelink.sql.azuresynapse.net"],
   databricks_ui_api: ["privatelink.azuredatabricks.net"],
   azuremonitor: ["privatelink.monitor.azure.com"],
+  connection: ["privatelink.wvd.microsoft.com"],
+  feed: ["privatelink-global.wvd.microsoft.com"],
+  global: ["privatelink-global.wvd.microsoft.com"],
+  cluster: ["privatelink.{region}.kusto.windows.net"],
+  webpubsub: ["privatelink.webpubsub.azure.com"],
+  iothub: ["privatelink.azure-devices.net", "privatelink.servicebus.windows.net"],
+  grafana: ["privatelink.grafana.azure.com"],
+  batchaccount: ["privatelink.batch.azure.com"],
+  nodemanagement: ["privatelink.batch.azure.com"],
+  azurebackup: ["privatelink.{region}.backup.windows.net"],
+  tenant: ["privatelink.analysis.windows.net", "privatelink.pbidedicated.windows.net"],
 };

@@ -140,7 +140,27 @@ dnsresources
 | --- | --- | --- | --- |
 | Q-PAAS | resources | Storage, SQL Server/MI, PostgreSQL/MySQL Flexible Server, Cosmos DB, Redis, Key Vault, App Service/Functions, Static Web Apps, API Management, Service Bus, Event Hubs, Event Grid, SignalR, App Configuration, Automation, Azure AI Services/OpenAI, AI Search, Machine Learning, Container Registry, AKS, Container Apps (Environment/App), Data Factory, Synapse, Databricks, Purview, Application Insights, Log Analytics (Katalog: `src/models/paasCatalog.ts`) | Ausgewertet werden `publicNetworkAccess` (bzw. anbieterspezifisch: `apiServerAccessProfile`, `network.delegatedSubnetResourceId`, `vnetConfiguration.internal`, `ingress.external`, `virtualNetworkType`, `publicDataEndpointEnabled`), Firewall/ACLs (`networkAcls`, `networkRuleSet`, `ipRules`, `virtualNetworkRules`, `inboundIpRules`, `authorizedIPRanges`), `privateEndpointConnections`, VNet-Integration/-Injection sowie Endpunkt-FQDNs und `minimumTlsVersion`. Fehlen `networkAcls` bei Storage, Key Vault, ACR oder AI Services, gilt der Dienst als offen für alle Netze. |
 
-Nicht in ARG und deshalb per ARM nachgeladen (§ 11, E-PAAS-01…03): Firewall- und VNet-Regeln von SQL Server und Flexible Servern sowie die Zugriffsbeschränkungen von App Service. Ohne diese Daten kennzeichnet die Normalisierung die Firewall als „nicht lesbar“ und die Erreichbarkeit als „unbekannt“; sie rät nicht.
+Zusätzlich liest Q-PAAS die Kindressourcen `microsoft.cdn/profiles/afdendpoints` (Front-Door-Hostnamen) und `microsoft.desktopvirtualization/applicationgroups` (Workspace ↔ Host Pool). Neu im Katalog: AVD Host Pools/Workspaces, Fabric-Kapazitäten, Fabric-/Power-BI-Private-Link-Dienste, Power BI Embedded, App Service Environment, Container Instances, Container Apps Jobs, Azure Data Explorer, Logic Apps (Consumption), Web PubSub, IoT Hub, Managed Grafana, Batch, Recovery Services Vault, Front Door/CDN und Azure Monitor Private Link Scope.
+
+**Ingress/Egress je Dienst** (`src/normalization/paasNetwork.ts`, Felder laut Microsoft-REST-Referenz):
+
+| Dienst | Ingress | Egress |
+| --- | --- | --- |
+| App Service / Functions | `ipSecurityRestrictions` und `scmIpSecurityRestrictions` (+ `…UseMain`, `…DefaultAction`), `httpsOnly`, `clientCertEnabled/Mode`, `minTlsVersion`, `ftpsState`, ASE | `virtualNetworkSubnetId`, `outboundVnetRouting.*` bzw. `vnetRouteAllEnabled`, `vnetImagePullEnabled`, `vnetContentShareEnabled`, `possibleOutboundIpAddresses` |
+| Container Apps Environment | `vnetConfiguration.internal`, `staticIp`, `publicNetworkAccess`, Private Endpoints, `peerTrafficConfiguration` | `infrastructureSubnetId`; UDR/NAT nur mit `workloadProfiles`, Consumption-only über Plattform-IP |
+| Container App / Job | `configuration.ingress` (`external`, `targetPort`, `transport`, `allowInsecure`, `ipSecurityRestrictions`, `additionalPortMappings`, `customDomains`, `clientCertificateMode`), interne Environment → nur VNet | erbt Subnet/Modus der Environment, `outboundIpAddresses` |
+| AKS | `apiServerAccessProfile` (Private Cluster, `authorizedIPRanges`, VNet-Integration), `ingressProfile.webAppRouting`, Add-ons AGIC/HTTP Routing, Istio-Ingress-Gateways, Load Balancer/Public IPs der `nodeResourceGroup` (Frontends mit Regeln = Services vom Typ LoadBalancer) | `networkProfile.outboundType` (loadBalancer, managed/userAssignedNATGateway, userDefinedRouting, none), `effectiveOutboundIPs`, Plugin/Mode/Policy/CIDRs, Knoten-Subnets |
+| PostgreSQL / MySQL / SQL / Redis | Firewall-Regeln (ARM), `network.delegatedSubnetResourceId`, `privateDnsZoneArmResourceId`, `minimalTlsVersion`, Nicht-TLS-Port | VNet-Injection; SQL `restrictOutboundNetworkAccess` |
+| API Management | `virtualNetworkType` (None/External/Internal), öffentliche/private IPs, `publicIpAddressId` | Subnet bei VNet-Modus, `outboundPublicIPAddresses` |
+| Service Bus / Event Hubs | `networkRuleSets/default` (ARM): `ipRules`, `virtualNetworkRules`, `trustedServiceAccessEnabled` | – |
+| Machine Learning / Synapse / Data Factory / Databricks / Data Explorer / AI Services | `publicNetworkAccess`, `ipAllowlist`, Firewall-Regeln, `requiredNsgRules`, `allowedIpRangeList` | Managed VNet (`managedNetwork.isolationMode` + Outbound-Regeln, `managedVirtualNetwork`, `preventDataExfiltration`, ADF `managedVirtualNetworks`/Integration Runtimes), VNet-Injection, `restrictOutboundNetworkAccess` + `allowedFqdnList` |
+| AVD Host Pool / Workspace | `publicNetworkAccess` (Enabled, EnabledForClientsOnly, EnabledForSessionHostsOnly, Disabled), RDP Shortpath, Private Endpoints (connection/feed) | Session Hosts (ARM `sessionHosts` → VM → NIC → Subnet), benötigte Service Tags |
+| Fabric / Power BI | nicht per ARM: Tenant-Einstellungen (Private Link, „Block Public Internet Access“) und Workspace-Zugriffsschutz – wird als solches ausgewiesen | Outbound Access Protection je Workspace (nicht per ARM) |
+| Front Door, Logic Apps, ACI, ASE, Grafana, Batch, IoT Hub, Monitor/AMPLS | öffentlicher Edge, `accessControl.triggers`, `ipAddress.type`, `internalLoadBalancingMode`, Konto-/Knotenregeln, `networkRuleSets`, `publicNetworkAccessForIngestion/Query`, `accessModeSettings` | Plattform-IPs, `outgoingIpAddresses`, `subnetIds`, ASE-Ausgangs-IPs, `deterministicOutboundIP` |
+
+Der Egress-Pfad eines Kunden-Subnets (UDR → Firewall/NVA, NAT Gateway, Default Outbound) kommt aus der Routing-Analyse und steht in den Details neben dem Subnet. Kubernetes-Ingress-Objekte und Services sind nicht per ARM lesbar; sichtbar sind die Load Balancer und Public IPs der Node-Resource-Group.
+
+Nicht in ARG und deshalb per ARM nachgeladen (§ 11, E-PAAS-01…08). Ohne diese Daten kennzeichnet die Normalisierung die Firewall als „nicht lesbar“ und die Erreichbarkeit als „unbekannt“; sie rät nicht.
 
 ## 9. Compute (nur netzwerkrelevante Felder), Monitoring, Rest
 
@@ -211,7 +231,12 @@ Ergebnis: je Typ die tatsächlich vorhandenen Property-Keys → Abgleich mit den
 | E-FD-01 | AFD Origin Groups / Origins / Routes / Security Policies / Custom Domains | `@azure/arm-cdn`: `afdOriginGroups.listByProfile`, `afdOrigins.listByOriginGroup`, `routes.listByEndpoint`, `securityPolicies.listByProfile` | jedes `microsoft.cdn/profiles` mit SKU `*_AzureFrontDoor` |
 | E-PAAS-01 | SQL-Server-Firewall- und VNet-Regeln | `GET {server}/firewallRules`, `GET {server}/virtualNetworkRules` (api-version 2021-11-01) | jeder `microsoft.sql/servers` mit öffentlichem Zugriff ≠ Disabled |
 | E-PAAS-02 | Firewall-Regeln von PostgreSQL/MySQL Flexible Server | `GET {server}/firewallRules` (2022-12-01 bzw. 2023-06-30) | wie oben |
-| E-PAAS-03 | App-Service-Zugriffsbeschränkungen | `GET {site}/config` (2023-12-01, Eintrag `web`: `ipSecurityRestrictions`, `ipSecurityRestrictionsDefaultAction`) | jede `microsoft.web/sites` mit öffentlichem Zugriff ≠ Disabled |
+| E-PAAS-03 | App-Service-Zugriffsbeschränkungen und Ausgangs-Routing | `GET {site}/config/web` (2023-12-01; die Antwort heißt wie die App, erkannt an der ID `…/config/web`) | jede `microsoft.web/sites` |
+| E-PAAS-04 | Netzwerkregeln Service Bus / Event Hubs | `GET {namespace}/networkRuleSets/default` (2022-10-01-preview bzw. 2024-01-01) | öffentlicher Zugriff ≠ Disabled |
+| E-PAAS-05 | Firewall-Regeln Redis / Synapse | `GET {id}/firewallRules` (2024-03-01 bzw. 2021-06-01) | öffentlicher Zugriff ≠ Disabled |
+| E-PAAS-06 | Data Factory Managed VNet und Integration Runtimes | `GET {factory}/managedVirtualNetworks`, `GET {factory}/integrationRuntimes` (2018-06-01) | jede Data Factory |
+| E-PAAS-07 | AVD Session Hosts | `GET {hostPool}/sessionHosts` (2024-04-03, `properties.resourceId` = VM) | jeder Host Pool |
+| E-PAAS-08 | App-Service-Environment-Netzwerk | `GET {ase}/configurations/networking` (2023-12-01: Ein-/Ausgangs-IPs) | jede ASE |
 | E-MON-01 | Diagnostic Settings | `GET {id}/providers/Microsoft.Insights/diagnosticSettings?api-version=2021-05-01-preview` | Azure Firewall, NAT Gateway (StandardV2 Flow Logs), Application Gateway, VPN/ER-Gateways, Front Door |
 | E-RT-01 (optional, aus) | Effective Routes | `POST …/networkInterfaces/{nic}/effectiveRouteTable` (Allowlist) | `--effective-routes`, Custom Role |
 | E-NSG-01 (optional, aus) | Effective NSG | `POST …/effectiveNetworkSecurityGroups` (Allowlist) | wie oben |
