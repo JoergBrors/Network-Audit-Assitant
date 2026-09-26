@@ -643,6 +643,18 @@ export function buildGraph(inv: NormalizedInventory): NetworkGraph {
       });
     }
   }
+  // Private endpoint → zone holding an A record with its IP (the DNS entry that makes it resolvable).
+  for (const pe of inv.privateEndpoints) {
+    const ips = new Set([...pe.addressing.ipv4, ...pe.addressing.ipv6].map((a) => a.split("/")[0]));
+    if (ips.size === 0) continue;
+    for (const z of inv.privateDnsZones) {
+      const records = z.records.filter(
+        (r) => (r.recordType === "A" || r.recordType === "AAAA") && r.values.some((v) => ips.has(v)),
+      );
+      if (records.length)
+        addEdge("dnsLink", pe.id, z.id, { label: `A-Record ${records.map((r) => r.name).join(", ")}` });
+    }
+  }
   for (const d of inv.dnsResolvers) {
     const type: NodeType = d.kind === "forwardingRuleset" ? "dnsForwardingRuleset" : "dnsResolver";
     const parent =

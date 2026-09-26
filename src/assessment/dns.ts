@@ -53,6 +53,10 @@ export interface PeDnsCheck {
   zoneIds: string[];
   /** Zones that hold an A record with the endpoint's IP. */
   recordZoneIds: string[];
+  /** Record zones linked to a VNet whose DNS resolution applies (the working zones). */
+  linkedZoneIds: string[];
+  /** VNets whose Private DNS zone links apply to the endpoint's VNet (resolver/hub VNets). */
+  resolvingVnetIds: string[];
   status: PeDnsStatus;
   detail: string;
 }
@@ -439,6 +443,8 @@ function checkPrivateEndpoint(
         expectedZones,
         zoneIds: zonesFound.map((z) => z.id),
         recordZoneIds: recordZones.map((z) => z.id),
+        linkedZoneIds: linked.map((z) => z.id),
+        resolvingVnetIds: resolving,
       };
       const resolverNames = resolving.map((v) => dnsOfVnet.get(v)?.vnet ?? lastSegment(v)).join(", ");
       const zoneList = (list: typeof zonesFound) =>

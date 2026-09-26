@@ -3,6 +3,7 @@ import { assessServices } from "../../src/assessment/index.js";
 import { expectedZonesFor } from "../../src/assessment/dns.js";
 import type { RawInventory, RawResource } from "../../src/models/discovery.js";
 import { normalizeInventory } from "../../src/normalization/normalize.js";
+import { analyzeInventory } from "../../src/pipeline/analyze.js";
 import * as F from "../fixtures/hubSpoke.js";
 
 const lc = (s: string) => s.toLowerCase();
@@ -69,7 +70,14 @@ describe("DNS assessment", () => {
       expectedZones: ["privatelink.database.windows.net"],
       ips: [PE_IP],
       status: "ok",
+      linkedZoneIds: [lc(ZONE)],
+      resolvingVnetIds: [lc(F.HUB)],
     });
+    // The graph links the private endpoint to the zone holding its A record.
+    const graph = analyzeInventory(raw).graph;
+    expect(
+      graph.edges.some((e) => e.type === "dnsLink" && e.source === lc(F.PE) && e.target === lc(ZONE)),
+    ).toBe(true);
     expect(a.dns.resolvers[0]).toMatchObject({ inboundIps: ["10.0.5.4"], usedByVnetIds: [lc(F.SPOKE)] });
     expect(codes(raw)).not.toContain("PAAS_UNREACHABLE_PRIVATE_DNS");
   });
