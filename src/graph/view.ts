@@ -57,8 +57,14 @@ export interface VisibleEdge {
 export interface VisibleGraph {
   nodes: VisibleNode[];
   edges: VisibleEdge[];
+  /** The requested level of detail exceeded MAX_VISIBLE_NODES; a reduced view is returned instead. */
   truncated: boolean;
+  /** Number of elements the requested level of detail would have shown. */
   totalCandidates: number;
+  /** Level of detail actually rendered (lower than requested when truncated). */
+  effectiveLevel: number;
+  /** Even the lowest level exceeded the limit; only the first MAX_VISIBLE_NODES elements are shown. */
+  capped: boolean;
   /** Components matching the active IP mode (equals node count when no IP filter is active). */
   matchCount: number;
 }
@@ -179,7 +185,24 @@ function edgeMatchesMode(edge: GraphEdge, mode: IpViewMode): boolean {
 }
 
 /** Computes the visible node/edge set for the topology view. Pure and deterministic. */
+/**
+ * Visible graph for the view state. If the requested level of detail would exceed MAX_VISIBLE_NODES,
+ * the level is reduced step by step until the view fits (expanded, focused and path nodes stay
+ * visible); as a last resort the view is capped – there is always something to show.
+ */
 export function computeVisibleGraph(index: GraphIndex, state: ViewState): VisibleGraph {
+  const requested = computeAtLevel(index, state, false);
+  if (!requested.truncated) return requested;
+  for (let level = state.level - 1; level >= 1; level--) {
+    const reduced = computeAtLevel(index, { ...state, level }, false);
+    if (!reduced.truncated)
+      return { ...reduced, truncated: true, totalCandidates: requested.totalCandidates };
+  }
+  const capped = computeAtLevel(index, { ...state, level: Math.min(state.level, 1) }, true);
+  return { ...capped, truncated: true, totalCandidates: requested.totalCandidates };
+}
+
+function computeAtLevel(index: GraphIndex, state: ViewState, cap: boolean): VisibleGraph {
   const visible = new Set<string>();
   const neighbors = new Set<string>();
 
@@ -340,7 +363,21 @@ export function computeVisibleGraph(index: GraphIndex, state: ViewState): Visibl
 
   const totalCandidates = visible.size;
   const truncated = totalCandidates > MAX_VISIBLE_NODES;
-  if (truncated) return { nodes: [], edges: [], truncated, totalCandidates, matchCount };
+  const effectiveLevel = state.level;
+  if (truncated && !cap)
+    return { nodes: [], edges: [], truncated, totalCandidates, matchCount, effectiveLevel, capped: false };
+  if (truncated) {
+    // Keep the coarsest elements; a node's ancestors have a lower or equal level, so they sort first.
+    const ordered = [...visible]
+      .map((id) => index.byId.get(id)!)
+      .sort((a, b) => a.lod - b.lod || compareNodes(a, b));
+    const keep = new Set<string>();
+    for (const n of ordered) {
+      if (keep.size >= MAX_VISIBLE_NODES) break;
+      if (!n.parentId || !visible.has(n.parentId) || keep.has(n.parentId)) keep.add(n.id);
+    }
+    for (const id of [...visible]) if (!keep.has(id)) visible.delete(id);
+  }
 
   // Containers: visible nodes with at least one visible child.
   const containerIds = new Set<string>();
@@ -402,7 +439,15 @@ export function computeVisibleGraph(index: GraphIndex, state: ViewState): Visibl
       });
     }
   }
-  return { nodes, edges: [...merged.values()], truncated, totalCandidates, matchCount };
+  return {
+    nodes,
+    edges: [...merged.values()],
+    truncated,
+    totalCandidates,
+    matchCount,
+    effectiveLevel,
+    capped: truncated,
+  };
 }
 
 /** Nearest ancestor-or-self whose level of detail is within `level`. */

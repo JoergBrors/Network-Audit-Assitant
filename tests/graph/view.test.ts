@@ -130,19 +130,41 @@ describe("computeVisibleGraph", () => {
       if (n.containerId) expect(position.get(n.containerId)!).toBeLessThan(position.get(n.node.id)!);
   });
 
-  it("refuses to render oversized views", () => {
-    const big: NetworkGraph = {
-      nodes: Array.from({ length: MAX_VISIBLE_NODES + 1 }, (_, i) => ({
-        id: `n${i}`,
-        type: "vnet",
-        name: `n${i}`,
-        lod: 1,
-        addressing: { ipv4: [], ipv6: [], classification: "no-ip" },
-        properties: {},
-      })),
+  const node = (id: string, lod: number, parentId?: string) => ({
+    id,
+    type: lod === 1 ? "subscription" : "vnet",
+    name: id,
+    lod,
+    parentId,
+    addressing: { ipv4: [], ipv6: [], classification: "no-ip" as const },
+    properties: {},
+  });
+
+  it("reduces the level of detail instead of rendering nothing", () => {
+    const big = {
+      nodes: [
+        node("sub", 1),
+        ...Array.from({ length: MAX_VISIBLE_NODES + 1 }, (_, i) => node(`v${i}`, 2, "sub")),
+      ],
       edges: [],
-    };
+    } as unknown as NetworkGraph;
+    const v = computeVisibleGraph(indexGraph(big), { level: 2, expanded: new Set(), ipMode: "all" });
+    expect(v).toMatchObject({
+      truncated: true,
+      capped: false,
+      effectiveLevel: 1,
+      totalCandidates: MAX_VISIBLE_NODES + 2,
+    });
+    expect(v.nodes.map((n) => n.node.id)).toEqual(["sub"]);
+  });
+
+  it("caps the view when even the lowest level is too large", () => {
+    const big = {
+      nodes: Array.from({ length: MAX_VISIBLE_NODES + 1 }, (_, i) => node(`n${i}`, 1)),
+      edges: [],
+    } as unknown as NetworkGraph;
     const v = computeVisibleGraph(indexGraph(big), { level: 1, expanded: new Set(), ipMode: "all" });
-    expect(v).toMatchObject({ truncated: true, nodes: [], totalCandidates: MAX_VISIBLE_NODES + 1 });
+    expect(v).toMatchObject({ truncated: true, capped: true, totalCandidates: MAX_VISIBLE_NODES + 1 });
+    expect(v.nodes).toHaveLength(MAX_VISIBLE_NODES);
   });
 });
