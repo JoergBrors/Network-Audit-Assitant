@@ -86,10 +86,12 @@ function DnsChecks({
   checks,
   Link,
   first,
+  zoneWhere,
 }: {
   checks: PeDnsCheck[];
   Link: LinkComponent;
   first: "pe" | "target";
+  zoneWhere: (id: string) => string | undefined;
 }) {
   if (checks.length === 0) return null;
   // List layout: the detail pane is too narrow for a four-column table.
@@ -103,8 +105,59 @@ function DnsChecks({
             <strong className={peDnsClass(c.status)}>{PE_DNS_LABEL[c.status]}</strong>
           </div>
           <div className="small">{c.detail}</div>
+          <ZoneLinks check={c} Link={Link} zoneWhere={zoneWhere} />
         </li>
       ))}
+    </ul>
+  );
+}
+
+function zoneState(c: PeDnsCheck, zoneId: string): { label: string; className: string } {
+  if (c.linkedZoneIds.includes(zoneId)) return { label: "A-Record, verlinkt", className: "status-ok" };
+  if (c.recordZoneIds.includes(zoneId))
+    return { label: "A-Record, nicht verlinkt", className: "status-error" };
+  // Resolution works through another zone: an equally named empty zone is only a side note.
+  if (c.linkedZoneIds.length > 0) return { label: "gleichnamige Zone, ohne A-Record", className: "muted" };
+  return { label: "ohne A-Record", className: "status-error" };
+}
+
+/** Linked Private DNS zones of a check and the VNets whose zone links resolve for the endpoint. */
+function ZoneLinks({
+  check: c,
+  Link,
+  zoneWhere,
+}: {
+  check: PeDnsCheck;
+  Link: LinkComponent;
+  zoneWhere: (id: string) => string | undefined;
+}) {
+  // Working zone first: equally named zones (split-horizon copies) are told apart by their location.
+  const rank = (id: string) => (c.linkedZoneIds.includes(id) ? 0 : c.recordZoneIds.includes(id) ? 1 : 2);
+  const zoneIds = [...new Set([...c.zoneIds, ...c.recordZoneIds])].sort((a, b) => rank(a) - rank(b));
+  if (zoneIds.length === 0 && c.resolvingVnetIds.length === 0) return null;
+  return (
+    <ul className="link-list small">
+      {zoneIds.map((id) => {
+        const state = zoneState(c, id);
+        return (
+          <li key={id}>
+            Private-DNS-Zone <Link id={id} />
+            {zoneWhere(id) && <span className="muted"> ({zoneWhere(id)})</span>} ·{" "}
+            <span className={state.className}>{state.label}</span>
+          </li>
+        );
+      })}
+      {c.resolvingVnetIds.length > 0 && (
+        <li>
+          Auflösung über VNet{c.resolvingVnetIds.length > 1 ? "s" : ""}{" "}
+          {c.resolvingVnetIds.map((id, i) => (
+            <span key={id}>
+              {i > 0 && ", "}
+              <Link id={id} />
+            </span>
+          ))}
+        </li>
+      )}
     </ul>
   );
 }
@@ -124,6 +177,13 @@ export function ServiceDetails({
   const assessment = assessServices(model.inventory);
   const findings = assessment.findings.filter((f) => f.resourceIds.includes(node.id));
   const sections: ReactNode[] = [];
+  const subscriptionNames = new Map(model.inventory.subscriptions.map((s) => [s.subscriptionId, s.name]));
+  const zoneWhere = (id: string) => {
+    const z = model.inventory.privateDnsZones.find((zone) => zone.id === id);
+    if (!z) return undefined;
+    const sub = z.subscriptionId ? (subscriptionNames.get(z.subscriptionId) ?? z.subscriptionId) : undefined;
+    return [z.resourceGroup, sub].filter(Boolean).join(" · ") || undefined;
+  };
 
   if (node.type === "paasService" && entity) {
     const s = entity.entity as unknown as PaasServiceEntity;
@@ -169,7 +229,7 @@ export function ServiceDetails({
     if (checks.length)
       sections.push(
         <Box key="paas-dns" title={`DNS-Auflösung der Private Endpoints (${checks.length})`}>
-          <DnsChecks checks={checks} Link={Link} first="pe" />
+          <DnsChecks checks={checks} Link={Link} first="pe" zoneWhere={zoneWhere} />
         </Box>,
       );
   }
@@ -179,7 +239,7 @@ export function ServiceDetails({
     if (checks.length)
       sections.push(
         <Box key="pe-dns" title="DNS-Auflösung">
-          <DnsChecks checks={checks} Link={Link} first="target" />
+          <DnsChecks checks={checks} Link={Link} first="target" zoneWhere={zoneWhere} />
           <p className="small muted">
             Erwartete Zone(n): {[...new Set(checks.flatMap((c) => c.expectedZones))].join(", ") || "–"}
           </p>
