@@ -5,6 +5,9 @@ import type { GraphNode } from "../../models/graph.js";
 import type { PaasServiceEntity } from "../../models/network.js";
 import type { NetworkModel } from "../../pipeline/analyze.js";
 import type { EntityRef } from "./entityIndex.js";
+import type { NormalizedInventory } from "../../models/network.js";
+import { EGRESS_LABEL, INGRESS_LABEL } from "../../normalization/paasNetwork.js";
+import { analyzeDefaultPaths, type DefaultPathSummary } from "../../routing/analysis.js";
 
 type LinkComponent = (props: { id: string | undefined; children?: ReactNode }) => ReactNode;
 
@@ -162,6 +165,139 @@ function ZoneLinks({
   );
 }
 
+/** Internet default path per subnet (computed once per inventory). */
+const defaultPathCache = new WeakMap<NormalizedInventory, Map<string, DefaultPathSummary[]>>();
+function defaultPathsBySubnet(inv: NormalizedInventory): Map<string, DefaultPathSummary[]> {
+  let map = defaultPathCache.get(inv);
+  if (!map) {
+    map = new Map();
+    for (const p of analyzeDefaultPaths(inv)) map.set(p.subnetId, [...(map.get(p.subnetId) ?? []), p]);
+    defaultPathCache.set(inv, map);
+  }
+  return map;
+}
+
+const INGRESS_CLASS: Record<string, string> = {
+  internet: "exposure-public",
+  "internet-restricted": "exposure-restricted",
+  vnet: "exposure-private",
+  "private-endpoint": "exposure-private",
+  none: "exposure-private",
+  unknown: "exposure-unknown",
+};
+
+/** Ingress and egress profile of a PaaS service (rules, IPs, subnets with their Internet path, links). */
+function NetworkProfile({
+  service: s,
+  inventory,
+  Link,
+}: {
+  service: PaasServiceEntity;
+  inventory: NormalizedInventory;
+  Link: LinkComponent;
+}) {
+  const ingress = s.ingress;
+  const egress = s.egress;
+  if (!ingress || !egress) return null;
+  const paths = defaultPathsBySubnet(inventory);
+  const linksOf = (direction: "ingress" | "egress" | "other") =>
+    (s.links ?? []).filter((l) => l.direction === direction);
+  const LinkList = ({ direction }: { direction: "ingress" | "egress" | "other" }) =>
+    linksOf(direction).length ? (
+      <ul className="link-list small">
+        {linksOf(direction).map((l) => (
+          <li key={`${l.id}|${l.label}`}>
+            {l.label}: <Link id={l.id} />
+          </li>
+        ))}
+      </ul>
+    ) : null;
+  return (
+    <>
+      <Box title={`Ingress · ${INGRESS_LABEL[ingress.mode]}`}>
+        <p className="small">
+          <span className={`exposure ${INGRESS_CLASS[ingress.mode]}`}>{INGRESS_LABEL[ingress.mode]}</span>{" "}
+          {ingress.summary.split(" · ").slice(1).join(" · ")}
+        </p>
+        {ingress.ips.length > 0 && (
+          <p className="small">
+            Eingangs-IPs: <span className="mono">{ingress.ips.join(", ")}</span>
+          </p>
+        )}
+        {ingress.rules.length > 0 && (
+          <table className="grid small">
+            <thead>
+              <tr>
+                <th>Quelle</th>
+                <th>Aktion</th>
+                <th>Prio</th>
+                <th>Bereich / Name</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ingress.rules.map((r, i) => (
+                <tr key={i}>
+                  <td className="mono">
+                    {r.source.startsWith("/subscriptions/") ? <Link id={r.source} /> : r.source}
+                  </td>
+                  <td className={r.action === "Deny" ? "status-error" : "status-ok"}>{r.action}</td>
+                  <td>{r.priority ?? ""}</td>
+                  <td>{[r.scope, r.name].filter(Boolean).join(" · ")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <Rows values={ingress.details} />
+        <LinkList direction="ingress" />
+      </Box>
+      <Box title={`Egress · ${EGRESS_LABEL[egress.mode]}`}>
+        <p className="small">{egress.summary}</p>
+        {egress.subnetIds.length > 0 && (
+          <ul className="link-list small">
+            {egress.subnetIds.map((id) => (
+              <li key={id}>
+                Subnet <Link id={id} />
+                {(paths.get(id) ?? []).map((p) => (
+                  <div key={p.family} className="muted">
+                    Internet ({p.family === "ipv4" ? "IPv4" : "IPv6"}): {p.summary}
+                  </div>
+                ))}
+              </li>
+            ))}
+          </ul>
+        )}
+        {egress.outboundIps.length > 0 && (
+          <p className="small">
+            Ausgangs-IPs ({egress.outboundIps.length}):{" "}
+            <span className="mono">
+              {egress.outboundIps.slice(0, 12).join(", ")}
+              {egress.outboundIps.length > 12 ? " …" : ""}
+            </span>
+          </p>
+        )}
+        {egress.allowedTargets && (
+          <p className="small">
+            Ausgang nur zu:{" "}
+            {egress.allowedTargets.length ? (
+              <span className="mono">{egress.allowedTargets.join(", ")}</span>
+            ) : (
+              "keinem Ziel (Liste leer)"
+            )}
+          </p>
+        )}
+        <Rows values={egress.details} />
+        <LinkList direction="egress" />
+      </Box>
+      {linksOf("other").length > 0 && (
+        <Box title="Verknüpft">
+          <LinkList direction="other" />
+        </Box>
+      )}
+    </>
+  );
+}
+
 /** PaaS exposure, DNS resolution and assessment findings for the selected node. */
 export function ServiceDetails({
   model,
@@ -225,6 +361,7 @@ export function ServiceDetails({
         />
       </Box>,
     );
+    sections.push(<NetworkProfile key="paas-network" service={s} inventory={model.inventory} Link={Link} />);
     const checks = assessment.dns.privateEndpoints.filter((c) => c.targetId === node.id);
     if (checks.length)
       sections.push(

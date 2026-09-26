@@ -94,7 +94,8 @@ firewallPolicies, ruleCollectionGroups, loadBalancers, applicationGateways, vpnG
 privateDnsZones, dnsResolvers, paasServices, virtualHubs) mit normalisierten Objekten; Resource IDs sind kleingeschrieben und \
 verweisen aufeinander (z. B. subnets[].nsgId, networkInterfaces[].nsgId, subnets[].routeTableId). \
 nsgs[].rules und nsgs[].defaultRules enthalten die Regeln; paasServices[] beschreibt PaaS-Endpunkte \
-(publicNetworkAccess, firewall, privateEndpointIds, vnetIntegration, exposure). \
+(publicNetworkAccess, firewall, privateEndpointIds, vnetIntegration, exposure) mit ingress \
+(mode, rules, ips, details), egress (mode, subnetIds, outboundIps, allowedTargets, details) und links. \
 assessmentContext.serviceAssessment enthält die regelbasierte Bewertung: DNS-Einstellungen je VNet, \
 die DNS-Prüfung jedes Private Endpoints und Befunde (findings) zu PaaS und DNS. "graph" enthält Knoten \
 und Beziehungen, "summary" und "discovery" Kennzahlen und Lücken der Datenerfassung.

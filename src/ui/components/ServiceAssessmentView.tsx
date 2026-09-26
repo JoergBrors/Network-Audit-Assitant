@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { EGRESS_LABEL, INGRESS_LABEL } from "../../normalization/paasNetwork.js";
 import { assessServices, type Finding, type Severity } from "../../assessment/index.js";
 import type { NormalizedInventory, PaasServiceEntity } from "../../models/network.js";
 import { lastSegment } from "../../utils/ids.js";
@@ -154,6 +155,8 @@ export function ServiceAssessmentView({ inventory }: { inventory: NormalizedInve
                 <th>Firewall</th>
                 <th>Private Endpoints</th>
                 <th>VNet</th>
+                <th>Ingress</th>
+                <th>Egress</th>
                 <th>Endpunkt</th>
               </tr>
             </thead>
@@ -181,6 +184,12 @@ export function ServiceAssessmentView({ inventory }: { inventory: NormalizedInve
                     {s.vnetIntegration.subnetIds.length
                       ? `${s.vnetIntegration.mode === "injection" ? "Injection" : "Integration"}: ${s.vnetIntegration.subnetIds.map(lastSegment).join(", ")}`
                       : "–"}
+                  </td>
+                  <td className="small" title={s.ingress?.summary}>
+                    {s.ingress ? INGRESS_LABEL[s.ingress.mode] : "–"}
+                  </td>
+                  <td className="small" title={s.egress?.summary}>
+                    {s.egress ? EGRESS_LABEL[s.egress.mode] : "–"}
                   </td>
                   <td className="mono small">{s.endpoints[0] ?? "–"}</td>
                 </tr>

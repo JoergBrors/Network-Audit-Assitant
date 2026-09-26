@@ -72,9 +72,9 @@ export function linkPaasNetwork(inv: NormalizedInventory, auxRows: RawResource[]
       for (const lb of lbs) {
         addLink(e, lb.id, lb.isPublic ? "Load Balancer (öffentlich)" : "Load Balancer (intern)", "ingress");
         // Frontends used by load-balancing rules are Kubernetes services of type LoadBalancer.
-        const used = new Set(lb.rules.map((r) => r.frontendName));
+        const used = new Set(lb.rules.map((r) => r.frontendName?.toLowerCase()));
         for (const f of lb.frontends) {
-          if (!used.has(f.name)) continue;
+          if (!used.has(f.name.toLowerCase())) continue;
           if (f.publicIpId) {
             const ip = ipOf(f.publicIpId);
             if (ip) publicFrontendIps.push(ip);

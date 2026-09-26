@@ -13,7 +13,7 @@ import { analyzeInbound } from "../routing/inbound.js";
 export const TOOL_NAME = "azure-network-audit-assistant";
 export const TOOL_VERSION = "0.1.0";
 /** 0.x until the assessment sections are implemented (IMPLEMENTATION_PLAN.md phases 9–14). */
-export const EXPORT_SCHEMA_VERSION = "0.6.0";
+export const EXPORT_SCHEMA_VERSION = "0.7.0";
 
 /** Which analysis parts this export contains. Consumers (incl. AI tools) must not infer missing parts. */
 export const EXPORT_COVERAGE = {

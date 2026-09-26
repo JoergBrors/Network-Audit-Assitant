@@ -815,6 +815,17 @@ export function buildGraph(inv: NormalizedInventory): NetworkGraph {
     }
   }
 
+  // PaaS network links (environment, load balancers, session hosts, …) – only between known nodes.
+  const linked = new Set<string>();
+  for (const p of inv.paasServices) {
+    for (const l of p.links ?? []) {
+      const target = resolve(l.id);
+      if (!target || !nodes.has(target) || linked.has(`${target}|${p.id}`)) continue;
+      linked.add(`${p.id}|${target}`);
+      addEdge("connectedTo", p.id, target, { label: l.label });
+    }
+  }
+
   // Targets outside the readable scope (other tenants, missing permissions) stay visible as external nodes.
   for (const e of [...edges.values()]) {
     for (const end of [e.source, e.target]) {

@@ -28,11 +28,14 @@ export function assessPaas(
 
   for (const s of inv.paasServices) {
     const label = `${s.service} ${s.name}`;
-    if (s.exposure === "public") {
+    const category = PAAS_TYPE_INFO.get(s.azureType)?.category;
+    // Front Door / CDN are public entry points by design; monitoring ingestion and AVD client access
+    // are public by Microsoft default – reported, but lower.
+    if (s.exposure === "public" && category !== "edge") {
       findings.push(
         finding(
           "paas",
-          isSensitive(s) ? "HIGH" : "MEDIUM",
+          isSensitive(s) ? "HIGH" : category === "monitoring" || category === "vdi" ? "LOW" : "MEDIUM",
           "PAAS_PUBLIC_OPEN",
           `${label}: öffentlicher Endpunkt ohne Einschränkung`,
           `${s.exposureReasons.join("; ")}. Erreichbar über ${s.endpoints.slice(0, 3).join(", ") || "den öffentlichen Endpunkt"}. Empfehlung: öffentlichen Zugriff deaktivieren (Private Endpoint) oder auf bekannte Quellen einschränken.`,
@@ -105,6 +108,7 @@ export function assessPaas(
         ),
       );
     }
+    findings.push(...ingressEgressFindings(s, label));
     const broken = (dnsByTarget.get(s.id) ?? []).filter((c) =>
       ["missing-zone", "missing-record", "not-linked"].includes(c.status),
     );
@@ -133,4 +137,98 @@ export function assessPaas(
     },
     findings,
   };
+}
+
+/** Findings from the ingress/egress profile (App Service SCM, AKS, Container Apps). */
+function ingressEgressFindings(s: PaasServiceEntity, label: string): Finding[] {
+  const out: Finding[] = [];
+  const ingress = s.ingress;
+  const egress = s.egress;
+  if (!ingress || !egress) return out;
+  const d = ingress.details;
+  switch (s.azureType) {
+    case "microsoft.web/sites": {
+      const mainRules = ingress.rules.filter((r) => !r.scope);
+      const scmRules = ingress.rules.filter((r) => r.scope === "SCM/Kudu");
+      const scmDefault = d["Standardaktion SCM"];
+      const restrictive = (list: typeof mainRules) =>
+        list.some((r) => r.action === "Allow" && r.source !== "Any");
+      const scmRestricted = restrictive(scmRules) || scmDefault === "wie Haupt-Site" || scmDefault === "Deny";
+      if (s.publicNetworkAccess === "Enabled" && restrictive(mainRules) && !scmRestricted)
+        out.push(
+          finding(
+            "paas",
+            "MEDIUM",
+            "WEB_SCM_UNRESTRICTED",
+            `${label}: Haupt-Site eingeschränkt, SCM/Kudu-Endpunkt aber offen`,
+            "Der Deployment-Endpunkt (*.scm.azurewebsites.net) hat eigene Zugriffsregeln. „Gleiche Regeln wie Haupt-Site“ aktivieren oder eigene SCM-Regeln setzen.",
+            [s.id],
+          ),
+        );
+      if (egress.mode === "vnet-partial")
+        out.push(
+          finding(
+            "paas",
+            "LOW",
+            "WEB_EGRESS_NOT_ROUTED",
+            `${label}: VNet-Integration ohne „Route All“`,
+            "Nur private Ziele gehen über das integrierte Subnet; Internet-Verkehr nutzt die Plattform-Ausgangs-IPs und umgeht UDR/Firewall. „Outbound internet traffic“ (Route All) aktivieren, wenn der Ausgang kontrolliert werden soll.",
+            [s.id, ...egress.subnetIds],
+          ),
+        );
+      break;
+    }
+    case "microsoft.containerservice/managedclusters": {
+      if (ingress.mode === "internet")
+        out.push(
+          finding(
+            "paas",
+            "MEDIUM",
+            "AKS_PUBLIC_WORKLOAD_INGRESS",
+            `${label}: Workloads über öffentliche Frontends erreichbar`,
+            `${d["Öffentliche LB-Frontends mit Regeln"] ?? "?"} öffentliche Load-Balancer-Frontend(s)${d["Application Gateway Ingress (AGIC)"] ? " bzw. Application Gateway (AGIC)" : ""}. Prüfen, ob die Services (Typ LoadBalancer / Ingress) öffentlich sein sollen; sonst interne Load Balancer oder WAF davor.`,
+            [s.id, ...(s.links ?? []).filter((l) => l.direction === "ingress").map((l) => l.id)],
+          ),
+        );
+      if (egress.mode === "load-balancer" || egress.mode === "nat-gateway")
+        out.push(
+          finding(
+            "paas",
+            "LOW",
+            "AKS_EGRESS_NOT_CONTROLLED",
+            `${label}: Ausgang über ${egress.mode === "nat-gateway" ? "NAT Gateway" : "Load Balancer (SNAT)"}`,
+            "Ausgehender Cluster-Verkehr geht über die Ausgangs-IPs des Clusters direkt ins Internet, nicht über eine zentrale Firewall. Für kontrollierten Egress Outbound-Typ „userDefinedRouting“ mit Azure Firewall/NVA verwenden. Liegt am Knoten-Subnet bereits eine UDR 0.0.0.0/0 zur Firewall, entsteht mit diesem Outbound-Typ asymmetrisches Routing.",
+            [s.id],
+          ),
+        );
+      break;
+    }
+    case "microsoft.app/managedenvironments":
+      if (egress.mode === "azure-default" && egress.subnetIds.length)
+        out.push(
+          finding(
+            "paas",
+            "LOW",
+            "ACA_EGRESS_NOT_CONTROLLABLE",
+            `${label}: Consumption-only-Umgebung – Ausgang nicht über UDR steuerbar`,
+            "Nur Umgebungen mit Workload Profiles unterstützen UDR und NAT Gateway für den Internet-Ausgang.",
+            [s.id],
+          ),
+        );
+      break;
+    case "microsoft.app/containerapps":
+      if (d["HTTP erlaubt (allowInsecure)"] === "ja" && ingress.mode.startsWith("internet"))
+        out.push(
+          finding(
+            "paas",
+            "LOW",
+            "ACA_INSECURE_HTTP",
+            `${label}: unverschlüsseltes HTTP am externen Ingress erlaubt`,
+            "„allowInsecure“ deaktivieren, damit HTTP auf HTTPS umgeleitet wird.",
+            [s.id],
+          ),
+        );
+      break;
+  }
+  return out;
 }
