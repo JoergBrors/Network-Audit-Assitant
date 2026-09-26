@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   Background,
   Controls,
@@ -92,6 +92,7 @@ function TopologyCanvas({
 
   const ready = positions?.key === layoutKey;
 
+  const edgeColor = selectedEdge ? edgeColorOf(selectedEdge.type) : undefined;
   const nodes = useMemo<Node<TopologyNodeData>[]>(() => {
     if (!ready) return [];
     return view.nodes.map((v) => {
@@ -111,7 +112,15 @@ function TopologyCanvas({
           changesBelow: changes?.changesBelow.get(v.node.id) ?? 0,
         },
         selected: v.node.id === selectedId,
-        style: { width: p.width, height: p.height },
+        style: {
+          width: p.width,
+          height: p.height,
+          ...(edgeColor &&
+          selectedEdge &&
+          (selectedEdge.source === v.node.id || selectedEdge.target === v.node.id)
+            ? ({ "--edge-color": edgeColor } as CSSProperties)
+            : {}),
+        },
         className: `rf-${categoryOf(v.node.type)}${
           selectedEdge && (selectedEdge.source === v.node.id || selectedEdge.target === v.node.id)
             ? " rf-edge-end"
@@ -119,7 +128,7 @@ function TopologyCanvas({
         }`,
       } satisfies Node<TopologyNodeData>;
     });
-  }, [ready, positions, view, expanded, selectedId, changes, selectedEdge]);
+  }, [ready, positions, view, expanded, selectedId, changes, selectedEdge, edgeColor]);
 
   const edges = useMemo<Edge[]>(() => {
     if (!ready) return [];
@@ -279,7 +288,11 @@ function EdgeInfo({
   onClose: () => void;
 }) {
   return (
-    <div className="edge-info small" role="status">
+    <div
+      className="edge-info small"
+      role="status"
+      style={{ "--edge-color": edgeColorOf(edge.type) } as CSSProperties}
+    >
       <strong>{EDGE_TYPE_LABELS[edge.type]}</strong>
       {edge.label && edge.label !== EDGE_TYPE_LABELS[edge.type] && <span> · {edge.label}</span>}:{" "}
       <button className="link" onClick={() => onSelectNode(edge.source)}>
@@ -295,4 +308,12 @@ function EdgeInfo({
       </button>
     </div>
   );
+}
+
+/** Legend colour of a relationship type (CSS variable named like its edge class). */
+function edgeColorOf(type: VisibleEdge["type"]): string {
+  const cls = EDGE_CLASS[type];
+  return ["edge-contains", "edge-internet", "edge-attached"].includes(cls)
+    ? "var(--text-muted)"
+    : `var(--${cls})`;
 }
