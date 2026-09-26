@@ -134,6 +134,14 @@ dnsresources
 | order by id asc
 ```
 
+## 8a. PaaS-Endpunkte
+
+| ID | Tabelle | Typen | Hinweise |
+| --- | --- | --- | --- |
+| Q-PAAS | resources | Storage, SQL Server/MI, PostgreSQL/MySQL Flexible Server, Cosmos DB, Redis, Key Vault, App Service/Functions, Static Web Apps, API Management, Service Bus, Event Hubs, Event Grid, SignalR, App Configuration, Automation, Azure AI Services/OpenAI, AI Search, Machine Learning, Container Registry, AKS, Container Apps (Environment/App), Data Factory, Synapse, Databricks, Purview, Application Insights, Log Analytics (Katalog: `src/models/paasCatalog.ts`) | Ausgewertet werden `publicNetworkAccess` (bzw. anbieterspezifisch: `apiServerAccessProfile`, `network.delegatedSubnetResourceId`, `vnetConfiguration.internal`, `ingress.external`, `virtualNetworkType`, `publicDataEndpointEnabled`), Firewall/ACLs (`networkAcls`, `networkRuleSet`, `ipRules`, `virtualNetworkRules`, `inboundIpRules`, `authorizedIPRanges`), `privateEndpointConnections`, VNet-Integration/-Injection sowie Endpunkt-FQDNs und `minimumTlsVersion`. Fehlen `networkAcls` bei Storage, Key Vault, ACR oder AI Services, gilt der Dienst als offen für alle Netze. |
+
+Nicht in ARG und deshalb per ARM nachgeladen (§ 11, E-PAAS-01…03): Firewall- und VNet-Regeln von SQL Server und Flexible Servern sowie die Zugriffsbeschränkungen von App Service. Ohne diese Daten kennzeichnet die Normalisierung die Firewall als „nicht lesbar“ und die Erreichbarkeit als „unbekannt“; sie rät nicht.
+
 ## 9. Compute (nur netzwerkrelevante Felder), Monitoring, Rest
 
 ### Q-CMP-VM
@@ -201,6 +209,9 @@ Ergebnis: je Typ die tatsächlich vorhandenen Property-Keys → Abgleich mit den
 | E-VWAN-03 | Hub Route Tables | `HubRouteTables.list(rg, hub)` | jeder vWAN-Hub |
 | E-SVC-01 | Service-Tag-Präfixe | `GET /subscriptions/{sub}/providers/Microsoft.Network/locations/{location}/serviceTags` (Items-Key `values`) | mindestens ein Service Tag in NSG-, UDR-, Firewall- oder AVNM-Regeln referenziert; Ergebnis auf referenzierte Tags gefiltert |
 | E-FD-01 | AFD Origin Groups / Origins / Routes / Security Policies / Custom Domains | `@azure/arm-cdn`: `afdOriginGroups.listByProfile`, `afdOrigins.listByOriginGroup`, `routes.listByEndpoint`, `securityPolicies.listByProfile` | jedes `microsoft.cdn/profiles` mit SKU `*_AzureFrontDoor` |
+| E-PAAS-01 | SQL-Server-Firewall- und VNet-Regeln | `GET {server}/firewallRules`, `GET {server}/virtualNetworkRules` (api-version 2021-11-01) | jeder `microsoft.sql/servers` mit öffentlichem Zugriff ≠ Disabled |
+| E-PAAS-02 | Firewall-Regeln von PostgreSQL/MySQL Flexible Server | `GET {server}/firewallRules` (2022-12-01 bzw. 2023-06-30) | wie oben |
+| E-PAAS-03 | App-Service-Zugriffsbeschränkungen | `GET {site}/config` (2023-12-01, Eintrag `web`: `ipSecurityRestrictions`, `ipSecurityRestrictionsDefaultAction`) | jede `microsoft.web/sites` mit öffentlichem Zugriff ≠ Disabled |
 | E-MON-01 | Diagnostic Settings | `GET {id}/providers/Microsoft.Insights/diagnosticSettings?api-version=2021-05-01-preview` | Azure Firewall, NAT Gateway (StandardV2 Flow Logs), Application Gateway, VPN/ER-Gateways, Front Door |
 | E-RT-01 (optional, aus) | Effective Routes | `POST …/networkInterfaces/{nic}/effectiveRouteTable` (Allowlist) | `--effective-routes`, Custom Role |
 | E-NSG-01 (optional, aus) | Effective NSG | `POST …/effectiveNetworkSecurityGroups` (Allowlist) | wie oben |

@@ -99,6 +99,7 @@ const SECURITY_TYPES = new Set<NodeType>([
   "publicIp",
   "publicIpPrefix",
   "privateEndpoint",
+  "paasService",
   "bastion",
 ]);
 const ROUTING_TYPES = new Set<NodeType>(["route", "routeTable"]);

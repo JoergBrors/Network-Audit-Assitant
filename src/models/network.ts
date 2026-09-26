@@ -1,3 +1,4 @@
+import type { PaasCategory } from "./paasCatalog.js";
 import type { FamilySplit, IpClassification, IpFamily } from "../addressing/ip.js";
 
 /**
@@ -391,6 +392,55 @@ export interface DnsResolverEntity extends BaseEntity {
   }[];
 }
 
+/** Public network access setting of a PaaS service (normalized across resource providers). */
+export type PublicNetworkAccess = "Enabled" | "Disabled" | "SecuredByPerimeter" | "Unknown";
+
+/**
+ * Network exposure of a PaaS endpoint: `private` = reachable only via Private Link / VNet,
+ * `restricted` = public endpoint limited by firewall rules, `public` = open to the Internet.
+ */
+export type PaasExposure = "private" | "restricted" | "public" | "unknown";
+
+export interface PaasServiceEntity extends BaseEntity {
+  /** Human-readable service, e.g. "Storage Account". */
+  service: string;
+  category: PaasCategory;
+  /** Raw kind (e.g. "functionapp,linux", "StorageV2", "OpenAI"). */
+  kind?: string | undefined;
+  sku?: string | undefined;
+  /** Hostnames / FQDNs the service is reached by. */
+  endpoints: string[];
+  publicNetworkAccess: PublicNetworkAccess;
+  firewall: {
+    /** Action for traffic not matching a rule; `Allow` means open. */
+    defaultAction?: "Allow" | "Deny" | undefined;
+    /** Allowed public IPs / CIDR ranges. */
+    ipRules: string[];
+    /** Subnets allowed via service endpoint / VNet rule. */
+    subnetIds: string[];
+    /** e.g. "AzureServices", "Logging, Metrics". */
+    bypass?: string | undefined;
+    /** Where the rules come from: Resource Graph, ARM enrichment or not readable. */
+    source: "arg" | "arm" | "none";
+  };
+  /** Private endpoints connected to the service (from its connections and from the endpoints). */
+  privateEndpointIds: string[];
+  /** Pending/rejected Private Link connections. */
+  privateEndpointConnectionStates: { privateEndpointId: string; status: string }[];
+  /** Subnets the service is injected into or integrated with (outbound VNet integration). */
+  vnetIntegration: {
+    subnetIds: string[];
+    mode?: "injection" | "integration" | undefined;
+    /** App Service: all outbound traffic routed through the VNet. */
+    routeAll?: boolean | undefined;
+  };
+  /** Public outbound IPs (App Service). */
+  outboundIps: string[];
+  minimumTlsVersion?: string | undefined;
+  exposure: PaasExposure;
+  exposureReasons: string[];
+}
+
 export interface VirtualMachineEntity extends BaseEntity {
   nicIds: string[];
   vmSize?: string | undefined;
@@ -513,6 +563,8 @@ export interface NormalizedInventory {
   privateEndpoints: PrivateEndpointEntity[];
   privateDnsZones: PrivateDnsZoneEntity[];
   dnsResolvers: DnsResolverEntity[];
+  /** PaaS services with network endpoints (storage, databases, Key Vault, App Service, …). */
+  paasServices: PaasServiceEntity[];
   virtualMachines: VirtualMachineEntity[];
   scaleSets: ScaleSetEntity[];
   /** Supported, but modelled generically (bastion, ExpressRoute, vWAN, WAF, flow logs, …). */

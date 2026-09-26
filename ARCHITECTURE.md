@@ -815,6 +815,17 @@ Felder je Eintrag: `ts`, `level`, `event`, plus event-spezifische Zahlen (`durat
 
 ---
 
+## 21a. Bewertung von PaaS-Endpunkten und DNS
+
+**[umgesetzt]** `src/assessment/` (deterministisch, ohne Netzwerkaufrufe, pro Inventar gecacht), UI: Tab „Übersicht & Qualität“ (`ServiceAssessmentView.tsx`) und Detailbereich (`ServiceDetails.tsx`), Export: `assessmentContext.serviceAssessment`.
+
+- **PaaS** (`paas.ts`): Erreichbarkeit je Dienst aus Public Network Access, Firewall-Standardaktion, IP-/Subnet-Regeln, Private Endpoints und VNet-Injection. Befunde: offener öffentlicher Endpunkt (HIGH für Daten-/Schlüsseldienste und AKS, sonst MEDIUM), Private Endpoint bei weiterhin offenem öffentlichem Zugriff, Ausnahme „Azure-Dienste“, nicht genehmigte Private-Link-Verbindungen, TLS < 1.2, nicht bestimmbare Erreichbarkeit, nur privat erreichbarer Dienst mit fehlerhafter privater DNS-Auflösung.
+- **DNS** (`dns.ts`):
+  1. **Wer beantwortet die Anfragen eines VNets?** Azure-DNS oder eigene Server; eigene Server werden einem DNS Private Resolver (Inbound Endpoint), einer Azure Firewall (DNS-Proxy), einem VNet oder „extern“ zugeordnet. Die Private-DNS-Zonen-Links des VNets, in dem der Server steht, sind maßgeblich.
+  2. **Private-Endpoint-Auflösung:** erwartete `privatelink`-Zone aus der Group ID (Tabelle nach Microsoft Learn „private-endpoint-dns“) bzw. dem FQDN; geprüft werden Zone vorhanden, A-Record mit der Endpoint-IP und Link zum auflösenden VNet. Status `ok`, `missing-zone`, `missing-record`, `not-linked`, `unverifiable` (externe DNS-Server oder Weiterleitung per Regelsatz), `unknown-zone`, `inactive` (Verbindung nicht genehmigt/getrennt).
+  3. **Weitere Befunde:** Zonen ohne VNet-Link, gleichnamige Zonen in mehreren Resource Groups (Split-Brain), externe DNS-Server, gemischte DNS-Konfiguration, ungenutzte Resolver-Inbound-Endpoints, Regelsätze ohne Link oder an VNets mit eigenen DNS-Servern, deaktivierte Weiterleitungsregeln.
+- **Grenzen:** Konfigurationsbasiert; Auflösung über On-Premises-DNS, Firewall-DNS-Proxy-Upstreams und bedingte Weiterleitungen außerhalb Azure wird als „nicht prüfbar“ markiert, nicht bewertet. Öffentliche DNS-Zonen werden nicht ausgewertet.
+
 ## 22. KI-Analyse (Azure OpenAI)
 
 **[umgesetzt]** `src/ai/azureOpenAi.ts` (Client auf dem offiziellen `openai`-SDK, Azure v1 API, Entra-ID-Authentifizierung), `src/ai/analyze.ts` (Chat-Session mit Code Interpreter, Streaming, Report), `src/export/aiReportPdf.ts` (PDF), `src/ui/workspace/AiAnalysisPanel.tsx` (Chat-Fenster), `src/ui/workspace/ChatMarkdown.tsx` (sicheres Markdown-Rendering der Antworten), `src/ui/workspace/aiSessionDirectory.ts` (Sitzungsverzeichnis), `src/ui/workspace/FloatingOverlay.tsx` (Fenster), Button „KI-Analyse“ in `App.tsx`.

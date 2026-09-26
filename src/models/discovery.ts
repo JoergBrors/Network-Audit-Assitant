@@ -109,6 +109,18 @@ export const EnrichmentSchema = z.object({
       tags: z.array(z.object({ name: z.string(), prefixes: z.array(z.string()) })),
     })
     .optional(),
+  /** PaaS network rules ARG does not return (SQL/flexible server firewall rules, App Service access restrictions). */
+  paasNetworkRules: z
+    .record(
+      z.string(),
+      z.object({
+        firewallRules: z.array(z.unknown()),
+        virtualNetworkRules: z.array(z.unknown()),
+        siteConfig: z.array(z.unknown()),
+        status: z.enum(["ok", "partial", "not-accessible"]),
+      }),
+    )
+    .optional(),
   results: z.array(EnrichmentResultSchema),
 });
 export type Enrichment = z.infer<typeof EnrichmentSchema>;

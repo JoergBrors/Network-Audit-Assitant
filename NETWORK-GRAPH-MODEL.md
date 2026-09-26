@@ -52,6 +52,8 @@ Weitere Knotenfelder: `name`, `tenantId`, `subscriptionId`, `subscriptionName`, 
 
 **Externe Knoten:** Ziele von Beziehungen außerhalb des lesbaren Scopes (anderer Tenant, fehlende Rechte, gelöschte Ressourcen, PaaS-Ziele von Private Endpoints) werden als `externalResource` unter `external` angelegt, damit keine Beziehung verloren geht.
 
+**PaaS-Dienste** (`paasService`, Detailstufe 3, unter der Region): Storage, Datenbanken, Key Vault, App Service, AKS usw. mit normalisiertem Netzwerkzugriff (`paasServices[]`: `publicNetworkAccess`, `firewall`, `privateEndpointIds`, `vnetIntegration`, `exposure` = `private` | `restricted` | `public` | `unknown`). Kanten: `privateEndpoint` (Private Endpoint → Dienst), `attached` (Dienst → Subnet bei VNet-Integration/-Injection), `connectedTo` (Subnet → Dienst bei Service-Endpoint-/VNet-Regel). Ein Private-Link-Ziel ohne erfassten Dienst bleibt ein `externalResource`-Platzhalter.
+
 ## 4. Beziehungen
 
 Kanten-ID: `<typ>:<quelle>-><ziel>[#qualifier]` (deterministisch).

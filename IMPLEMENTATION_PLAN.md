@@ -27,6 +27,7 @@ Legende: ✅ fertig · ◐ teilweise (Kern umgesetzt, Restpunkte offen) · ○ o
 | 17 | Tests (Konsolidierung) | ◐ | 209 Tests; Coverage-Messung, Akzeptanzsuite, `test:live` offen |
 | 18 | Dokumentation | ◐ | 8 von 10 Dokumenten vorhanden; `IPV6-ASSESSMENT.md`, `ASSESSMENT-RULES.md`, `SECURITY.md`, `docs/ACCEPTANCE.md` offen |
 | 22 | KI-Analyse (Azure OpenAI) | ◐ | Export (unverändert, internes Deployment) → Code Interpreter-Chat mit Streaming, Datei-Anhängen und Report/PDF; Entra ID; CLI-Äquivalent und Persistenz offen |
+| 23 | PaaS-Endpunkte & DNS-Bewertung | ◐ | Discovery Q-PAAS + ARM-Regeln, `paasServices`, DNS-/Private-Endpoint-Prüfung, Befunde in Übersicht/Details/Export; weitere Dienst-Regeln offen |
 
 **Abweichung von der Reihenfolge:** Auf Wunsch des Auftraggebers wurden Ansicht/Drilldown (Phase 7), JSON-Export/-Import (Teile 12/14) und der Snapshot-Vergleich (Kern 13) vor Phase 5 und 8–11 umgesetzt. Die dort vorgesehenen Analyse-Ergebnisse (Routing, Dual-Stack, Findings) fließen nachträglich in Export und Vergleich ein; der Export kennzeichnet fehlende Teile in `metadata.coverage`.
 
@@ -186,6 +187,19 @@ Freigegeben am 2026-09-25 mit folgenden Entscheidungen: strikt read-only; BGP-Ro
 **Real verifiziert:** Gegen die Hub-Spoke-Fixture – keine reale Subscription-/Resource-Group-/Resource-ID/-Name/Public-IP im sanitisierten Output, Struktur/Zählwerte/Präfixlängen/Graph-Kanten identisch, Determinismus über gleichen Schlüssel bestätigt.
 **Offen:** CLI-Flag `--sanitize`/`--sanitize-key` (aktuell nur aus der Web-UI aufrufbar), `SECURITY.md` (Threat Model: MSAL-Tokens im Browser, CSP, Redirect-Bridge, Exporte, Read-only-Garantie, Azure-OpenAI-Key im Bundle – Risiken R20/R21 in ARCHITECTURE.md bereits vorgezogen dokumentiert).
 **Tests:** `tests/export/sanitize.test.ts` – Determinismus, Schlüsselwechsel, keine Leckage (auch in zusammengesetzten IDs/Freitext), Plattformnamen bleiben erhalten, strukturelle Felder identisch, Public-IP-Ersetzung, Secret-Feld-Entfernung.
+
+## Phase 23 — PaaS-Endpunkte & DNS-Bewertung ◐ *(neu, 2026-09-26)*
+
+**Umgesetzt:**
+- **Discovery:** ARG-Abfrage Q-PAAS über 31 PaaS-Diensttypen (`src/models/paasCatalog.ts`) plus ARM-Enrichment E-PAAS-01…03 für SQL-/Flexible-Server-Firewall und App-Service-Zugriffsbeschränkungen.
+- **Normalisierung:** Abschnitt `paasServices[]` mit Erreichbarkeit (`src/normalization/paas.ts`), Verknüpfung mit Private Endpoints auch dann, wenn der Dienst sie nicht selbst listet.
+- **Graph:** Knotentyp `paasService` mit Kanten zu Private Endpoints, integrierten und erlaubten Subnets.
+- **Bewertung:** `src/assessment/` (ARCHITECTURE.md § 21a) mit DNS-Auflösung je VNet, DNS-Prüfung jedes Private Endpoints und Befunden zu PaaS und DNS.
+- **UI:** Abschnitte in „Übersicht & Qualität“ (Befunde, PaaS-Endpunkte, DNS der VNets, Private-DNS-Zonen, Resolver/Regelsätze, Private-Endpoint-Prüfung, Filter) und im Detailbereich (PaaS, Private Endpoint, VNet).
+- **Export und Weitergabe:** Export-Abschnitt `paasServices` (ältere Exporte ohne ihn werden weiter importiert) und `assessmentContext.serviceAssessment`; Drift-Kategorie SECURITY für `paasService`; KI-Instruktionen kennen die neuen Abschnitte.
+
+**Offen:** Netzwerkregeln weiterer Dienste per ARM (Service Bus/Event Hubs `networkRuleSets`, Redis-Firewall), Firewall-DNS-Proxy-Upstream-Auflösung, öffentliche DNS-Zonen, Front-Door-Origins (E-FD-01) als PaaS-Eingänge.
+**Tests:** `tests/normalization/paas.test.ts`, `tests/assessment/services.test.ts`, Erweiterungen in `tests/azure/enrichment.test.ts`, `tests/azure/queries.test.ts`, `tests/export/assessmentJson.test.ts`.
 
 ## Phase 22 — KI-Analyse (Azure OpenAI) ◐ *(zahlt auf Lastenheft § 59–63 ein)*
 

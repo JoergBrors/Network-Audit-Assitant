@@ -90,7 +90,12 @@ export const ResourceNode = memo(function ResourceNode({ data, selected }: NodeP
         <span className="topo-node-name">{node.name}</span>
       </div>
       <div className="topo-node-row small">
-        <span className="topo-node-address mono">{addressSummary(node) || NODE_TYPE_LABELS[node.type]}</span>
+        <span className="topo-node-address mono">
+          {addressSummary(node) ||
+            (node.type === "paasService" && typeof node.properties["service"] === "string"
+              ? node.properties["service"]
+              : NODE_TYPE_LABELS[node.type])}
+        </span>
         <ChangeMarkers change={change} changesBelow={changesBelow} />
         <Badges node={node} />
         {hiddenChildren > 0 && (

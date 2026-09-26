@@ -1,3 +1,5 @@
+import { PAAS_SERVICE_TYPES } from "../../models/paasCatalog.js";
+
 /**
  * Azure Resource Graph query catalog. Specification: RESOURCE-GRAPH-QUERIES.md.
  * Every query is read-only KQL, ordered by id for stable paging.
@@ -221,6 +223,16 @@ export const NETWORK_QUERIES: readonly ArgQueryDefinition[] = [
   ]),
 ];
 
+/** PaaS services with network endpoints (public access, firewall, Private Link, VNet integration). */
+export const PAAS_QUERIES: readonly ArgQueryDefinition[] = [
+  typeQuery(
+    "Q-PAAS",
+    "resources",
+    "PaaS services: public network access, firewall/ACLs, private endpoint connections, VNet integration",
+    PAAS_SERVICE_TYPES.map((t) => t.type),
+  ),
+];
+
 function unclassifiedQuery(id: string, table: "resources" | "networkresources"): ArgQueryDefinition {
   const known = [
     ...new Set(NETWORK_QUERIES.flatMap((q) => q.types).filter((t) => t.startsWith("microsoft.network/"))),
@@ -245,5 +257,6 @@ export const UNCLASSIFIED_QUERIES: readonly ArgQueryDefinition[] = [
 export const DISCOVERY_QUERIES: readonly ArgQueryDefinition[] = [
   ORG_SUBSCRIPTIONS,
   ...NETWORK_QUERIES,
+  ...PAAS_QUERIES,
   ...UNCLASSIFIED_QUERIES,
 ];

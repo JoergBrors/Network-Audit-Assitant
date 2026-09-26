@@ -15,6 +15,40 @@ import { createArmReader, NETWORK_API_VERSION, type ArmReader } from "./armReade
 /** Service tags that NSGs/firewalls/UDRs evaluate natively without prefix lists. */
 const BUILTIN_TAGS = new Set(["*", "any", "internet", "virtualnetwork", "azureloadbalancer"]);
 
+/** ARM collections with PaaS network rules (RESOURCE-GRAPH-QUERIES.md § 11, E-PAAS-01…03). */
+const PAAS_RULE_APIS: Record<
+  string,
+  {
+    label: string;
+    version: string;
+    calls: number;
+    firewallRules?: boolean;
+    virtualNetworkRules?: boolean;
+    siteConfig?: boolean;
+  }
+> = {
+  "microsoft.sql/servers": {
+    label: "SqlServers",
+    version: "2021-11-01",
+    calls: 2,
+    firewallRules: true,
+    virtualNetworkRules: true,
+  },
+  "microsoft.dbforpostgresql/flexibleservers": {
+    label: "PostgreSqlFlexibleServers",
+    version: "2022-12-01",
+    calls: 1,
+    firewallRules: true,
+  },
+  "microsoft.dbformysql/flexibleservers": {
+    label: "MySqlFlexibleServers",
+    version: "2023-06-30",
+    calls: 1,
+    firewallRules: true,
+  },
+  "microsoft.web/sites": { label: "WebApps", version: "2023-12-01", calls: 1, siteConfig: true },
+};
+
 export interface EnrichmentOptions {
   raw: RawInventory;
   credential: TokenCredential;
@@ -54,8 +88,8 @@ export function referencedServiceTags(raw: RawInventory): string[] {
 
 /**
  * Phase 5: targeted ARM enrichment for data Resource Graph does not provide:
- * Virtual WAN hub connections, routing intent and hub route tables (E-VWAN-01…03) and the
- * address prefixes of referenced service tags. Failures are isolated and reported as warnings.
+ * Virtual WAN hub connections, routing intent and hub route tables (E-VWAN-01…03), the
+ * address prefixes of referenced service tags and PaaS network rules (E-PAAS-01…03). Failures are isolated and reported as warnings.
  */
 export async function runEnrichment(
   options: EnrichmentOptions,
@@ -88,9 +122,10 @@ export async function runEnrichment(
     tenantId: string,
     path: string,
     itemsKey = "value",
+    apiVersion = NETWORK_API_VERSION,
   ) => {
     try {
-      const value = await limit(() => readerFor(tenantId).list(path, NETWORK_API_VERSION, itemsKey));
+      const value = await limit(() => readerFor(tenantId).list(path, apiVersion, itemsKey));
       results.push({ operation, ...(resourceId ? { resourceId } : {}), status: "ok" });
       return value;
     } catch (error) {
@@ -169,10 +204,54 @@ export async function runEnrichment(
     };
   })();
 
-  await Promise.all([...hubJobs, tagJob]);
+  // PaaS network rules that Resource Graph does not return (only where the public endpoint is on).
+  const paasRows = (raw.resources["Q-PAAS"] ?? []).filter((r) => {
+    const type = r.type.toLowerCase();
+    if (!PAAS_RULE_APIS[type]) return false;
+    const props = isObj(r.properties) ? r.properties : {};
+    const network = isObj(props["network"]) ? props["network"] : {};
+    const value = props["publicNetworkAccess"] ?? network["publicNetworkAccess"];
+    const access = typeof value === "string" ? value.toLowerCase() : "";
+    return access !== "disabled";
+  });
+  const paasRules: NonNullable<Enrichment["paasNetworkRules"]> = {};
+  const paasJobs = paasRows.map(async (r) => {
+    const api = PAAS_RULE_APIS[r.type.toLowerCase()]!;
+    const tenantId = tenantOf(r);
+    const [firewallRules, virtualNetworkRules, siteConfig] = await Promise.all([
+      api.firewallRules
+        ? call(`${api.label}.firewallRules`, r.id, tenantId, `${r.id}/firewallRules`, "value", api.version)
+        : Promise.resolve([]),
+      api.virtualNetworkRules
+        ? call(
+            `${api.label}.virtualNetworkRules`,
+            r.id,
+            tenantId,
+            `${r.id}/virtualNetworkRules`,
+            "value",
+            api.version,
+          )
+        : Promise.resolve([]),
+      api.siteConfig
+        ? call(`${api.label}.config`, r.id, tenantId, `${r.id}/config`, "value", api.version)
+        : Promise.resolve([]),
+    ]);
+    const parts = [firewallRules, virtualNetworkRules, siteConfig];
+    const failed = parts.filter((x) => x === undefined).length;
+    paasRules[r.id.toLowerCase()] = {
+      firewallRules: firewallRules ?? [],
+      virtualNetworkRules: virtualNetworkRules ?? [],
+      siteConfig: siteConfig ?? [],
+      status: failed === 0 ? "ok" : failed === api.calls ? "not-accessible" : "partial",
+    };
+  });
+
+  await Promise.all([...hubJobs, tagJob, ...paasJobs]);
+  if (paasRows.length > 0) enrichment.paasNetworkRules = paasRules;
   logger.info("arm.enrichment", {
     hubs: hubs.length,
     serviceTags: enrichment.serviceTags?.tags.length ?? 0,
+    paasServices: paasRows.length,
     calls: results.length,
     failed: results.filter((r) => r.status !== "ok").length,
   });

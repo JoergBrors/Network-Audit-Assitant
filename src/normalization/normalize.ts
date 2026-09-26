@@ -6,6 +6,8 @@ import {
   type IpFamily,
 } from "../addressing/ip.js";
 import type { RawInventory, RawResource } from "../models/discovery.js";
+import { PAAS_SERVICE_TYPES } from "../models/paasCatalog.js";
+import { classifyExposure, normalizePaasService } from "./paas.js";
 import type {
   ApplicationGatewayEntity,
   BaseEntity,
@@ -203,6 +205,7 @@ export function normalizeInventory(raw: RawInventory): NormalizedInventory {
     privateEndpoints: [],
     privateDnsZones: [],
     dnsResolvers: [],
+    paasServices: [],
     virtualMachines: [],
     scaleSets: [],
     otherNetworkResources: [],
@@ -232,6 +235,12 @@ export function normalizeInventory(raw: RawInventory): NormalizedInventory {
   for (const r of of(T.pe)) inv.privateEndpoints.push(normalizePrivateEndpoint(r));
   normalizePrivateDns(of(T.pdnsZone), of(T.pdnsLink), recordRows(byType), inv);
   normalizeDnsResolvers(byType, inv);
+  for (const t of PAAS_SERVICE_TYPES) {
+    for (const r of of(t.type))
+      inv.paasServices.push(
+        normalizePaasService(r, base(r), raw.enrichment?.paasNetworkRules?.[r.id.toLowerCase()]),
+      );
+  }
   for (const r of of(T.vm)) inv.virtualMachines.push(normalizeVm(r));
   for (const r of of(T.vmss)) inv.scaleSets.push(normalizeScaleSet(r));
 
@@ -1110,6 +1119,21 @@ function resolveCrossReferences(inv: NormalizedInventory): void {
     const merged = splitByFamily([...pe.addressing.ipv4, ...pe.addressing.ipv6, ...ips]);
     pe.addressing = merged;
     pe.ipClassification = classifyAddressing(merged);
+  }
+
+  // PaaS: private endpoints that point at the service (also when the service does not list them).
+  const paas = new Map(inv.paasServices.map((p) => [p.id, p]));
+  for (const pe of inv.privateEndpoints) {
+    for (const t of pe.targets) {
+      const service = paas.get(t.resourceId);
+      if (service && !service.privateEndpointIds.includes(pe.id)) service.privateEndpointIds.push(pe.id);
+    }
+  }
+  for (const service of inv.paasServices) {
+    service.privateEndpointIds.sort();
+    const { exposure, reasons } = classifyExposure(service);
+    service.exposure = exposure;
+    service.exposureReasons = reasons;
   }
 
   // VM scale set instance NICs.

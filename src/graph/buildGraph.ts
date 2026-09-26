@@ -55,6 +55,7 @@ const LOD: Partial<Record<NodeType, GraphNode["lod"]>> = {
   privateDnsZone: 4,
   dnsForwardingRuleset: 4,
   privateLinkService: 4,
+  paasService: 3,
   wafPolicy: 4,
   ipGroup: 5,
   externalResource: 4,
@@ -671,6 +672,31 @@ export function buildGraph(inv: NormalizedInventory): NetworkGraph {
     if (d.resolverId) addEdge("connectedTo", d.id, d.resolverId, { label: "Endpoint von" });
     for (const v of d.linkedVnetIds) addEdge("dnsLink", d.id, v, { label: "Ruleset-Link" });
     for (const o of d.outboundEndpointIds) addEdge("connectedTo", d.id, o, { label: "Outbound Endpoint" });
+  }
+
+  // --- PaaS services ---------------------------------------------------------------------------------
+  for (const p of inv.paasServices) {
+    addNode({
+      id: p.id,
+      type: "paasService",
+      name: p.name,
+      ...common(p),
+      parentId: containerOf(p),
+      properties: {
+        service: p.service,
+        exposure: p.exposure,
+        publicNetworkAccess: p.publicNetworkAccess,
+        ...(p.firewall.defaultAction ? { firewallDefaultAction: p.firewall.defaultAction } : {}),
+        ...(p.firewall.ipRules.length ? { ipRules: p.firewall.ipRules } : {}),
+        privateEndpoints: p.privateEndpointIds.length,
+        ...(p.endpoints.length ? { endpoints: p.endpoints } : {}),
+      },
+    });
+    const label = p.vnetIntegration.mode === "injection" ? "VNet-Injection" : "VNet-Integration";
+    // Only subnets in the discovered inventory (rules may name subnets of other tenants).
+    for (const s of p.vnetIntegration.subnetIds) if (nodes.has(s)) addEdge("attached", p.id, s, { label });
+    for (const s of p.firewall.subnetIds)
+      if (nodes.has(s)) addEdge("connectedTo", s, p.id, { label: "erlaubtes Subnet" });
   }
 
   // --- Generic network resources --------------------------------------------------------------------

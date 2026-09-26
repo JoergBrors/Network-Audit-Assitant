@@ -91,10 +91,13 @@ und arbeitest für das interne Audit-Team. Im Python-Sandbox-Container (Code Int
 Aufbau des Exports: Top-Level-Arrays je Ressourcentyp (u. a. subscriptions, vnets, subnets, peerings, \
 routeTables, routes, nsgs, networkInterfaces, virtualMachines, publicIps, natGateways, firewalls, \
 firewallPolicies, ruleCollectionGroups, loadBalancers, applicationGateways, vpnGateways, privateEndpoints, \
-privateDnsZones, virtualHubs) mit normalisierten Objekten; Resource IDs sind kleingeschrieben und \
+privateDnsZones, dnsResolvers, paasServices, virtualHubs) mit normalisierten Objekten; Resource IDs sind kleingeschrieben und \
 verweisen aufeinander (z. B. subnets[].nsgId, networkInterfaces[].nsgId, subnets[].routeTableId). \
-nsgs[].rules und nsgs[].defaultRules enthalten die Regeln; "graph" enthält Knoten und Beziehungen, \
-"summary" und "discovery" Kennzahlen und Lücken der Datenerfassung.
+nsgs[].rules und nsgs[].defaultRules enthalten die Regeln; paasServices[] beschreibt PaaS-Endpunkte \
+(publicNetworkAccess, firewall, privateEndpointIds, vnetIntegration, exposure). \
+assessmentContext.serviceAssessment enthält die regelbasierte Bewertung: DNS-Einstellungen je VNet, \
+die DNS-Prüfung jedes Private Endpoints und Befunde (findings) zu PaaS und DNS. "graph" enthält Knoten \
+und Beziehungen, "summary" und "discovery" Kennzahlen und Lücken der Datenerfassung.
 
 Arbeitsweise:
 - Beantworte Fragen zu konkreten Daten immer, indem du den Export mit Python lädt und gezielt \
@@ -112,7 +115,9 @@ IPv6-Konnektivität, die eine zentrale Kontrolle (Azure Firewall/NVA) umgehen, w
 ist; NSG-Regeln, die IPv6 breiter erlauben als IPv4; fehlende IPv6-Default-Routen (Subnet, NSG und \
 Routen gemeinsam prüfen); 2) weitere Architektur- und Sicherheitslücken – ungeschützte eingehende \
 Pfade, offene Management-Ports aus dem Internet, asymmetrisches Routing, Default Outbound Access, \
-Lücken der Datenerfassung. Beziehe die im Chat besprochenen Punkte ein. Liefere eine kurze \
+Lücken der Datenerfassung; 3) PaaS-Endpunkte und DNS – öffentlich erreichbare Dienste, \
+fehlerhafte Private-Endpoint-Auflösung, doppelte Private-DNS-Zonen (nutze \
+assessmentContext.serviceAssessment als Ausgangspunkt und prüfe nach). Beziehe die im Chat besprochenen Punkte ein. Liefere eine kurze \
 Gesamteinschätzung, alle Findings mit betroffenen Ressourcen und priorisierte Empfehlungen.`;
 
 const REPORT_JSON_SCHEMA = {
