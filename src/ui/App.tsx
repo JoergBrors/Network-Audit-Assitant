@@ -14,6 +14,8 @@ import { DiscoverySummary } from "./components/DiscoverySummary.js";
 import { Workspace, type WorkspaceComparison } from "./workspace/Workspace.js";
 import { diffModels } from "../drift/diff.js";
 import { downloadJson } from "./workspace/download.js";
+import { AiAnalysisPanel } from "./workspace/AiAnalysisPanel.js";
+import { readAzureOpenAiConfigFromEnv } from "../ai/azureOpenAi.js";
 
 interface AppProps {
   session: MsalSession | null;
@@ -34,9 +36,11 @@ export function App({ session, startupError }: AppProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const compareInput = useRef<HTMLInputElement>(null);
   const [baseline, setBaseline] = useState<{ model: NetworkModel; label: string } | null>(null);
+  const [showAiPanel, setShowAiPanel] = useState(false);
   // Discovery cache lives in memory for this tab only and is dropped on sign-out.
   const cache = useMemo(() => new MemoryCache(), []);
   const logger = useMemo(() => createLogger({ sink: consoleSink(), level: "info" }), []);
+  const aiConfigured = useMemo(() => readAzureOpenAiConfigFromEnv() !== undefined, []);
 
   const signIn = useCallback(async () => {
     if (!session) return;
@@ -108,6 +112,11 @@ export function App({ session, startupError }: AppProps) {
     downloadJson(assessmentFileName(now), buildAssessmentExport(model, { now }));
   }, [model]);
 
+  const buildExportForAi = useCallback(() => {
+    if (!model) throw new Error("Kein Modell geladen.");
+    return buildAssessmentExport(model, { now: new Date() });
+  }, [model]);
+
   const importJson = useCallback(async (file: File) => {
     setError(null);
     try {
@@ -169,6 +178,18 @@ export function App({ session, startupError }: AppProps) {
           >
             Mit JSON vergleichen
           </button>
+          <button
+            className="secondary"
+            onClick={() => setShowAiPanel((v) => !v)}
+            disabled={!model}
+            title={
+              aiConfigured
+                ? "Anonymisierten Export von Azure OpenAI analysieren lassen (z. B. IPv6-Lecks)"
+                : "Azure OpenAI ist nicht konfiguriert (VITE_AZURE_OPENAI_* in .env.local)"
+            }
+          >
+            KI-Analyse
+          </button>
           <input
             ref={compareInput}
             type="file"
@@ -206,6 +227,10 @@ export function App({ session, startupError }: AppProps) {
           )}
         </div>
       </header>
+
+      {showAiPanel && model && (
+        <AiAnalysisPanel buildExport={buildExportForAi} onClose={() => setShowAiPanel(false)} />
+      )}
 
       {(startupError || error) && (
         <div className="messages">

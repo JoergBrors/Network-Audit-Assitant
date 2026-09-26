@@ -1004,6 +1004,252 @@ details.section > summary {
   color: var(--text);
 }
 
+.severity-badge {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--surface);
+  white-space: nowrap;
+}
+.severity-CRITICAL {
+  background: var(--network-critical);
+}
+.severity-HIGH {
+  background: var(--network-critical);
+  opacity: 0.85;
+}
+.severity-MEDIUM {
+  background: var(--network-warning);
+}
+.severity-LOW {
+  background: var(--text-muted);
+}
+.severity-INFO {
+  background: var(--border);
+  color: var(--text);
+}
+
+.ai-analysis-result {
+  margin-top: var(--space-3);
+}
+.ai-findings {
+  list-style: none;
+  margin: var(--space-2) 0;
+  padding: 0;
+}
+.ai-findings li {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.ai-chat {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.ai-chat-messages {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  padding: var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ai-chat-bubble {
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ai-chat-bubble-user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--accent-text);
+  border-bottom-right-radius: 4px;
+}
+.ai-chat-bubble-assistant {
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+.ai-chat-bubble-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+.ai-chat-image {
+  max-width: 180px;
+  max-height: 180px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.ai-pending-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-1);
+}
+.ai-pending-image {
+  position: relative;
+}
+.ai-pending-image img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.ai-pending-image-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ai-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ai-composer textarea {
+  resize: vertical;
+  min-height: 44px;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.ai-panel-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: var(--space-2);
+  overflow-y: auto;
+}
+
+.ai-session-directory {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: var(--space-2);
+  background: var(--surface-2);
+}
+.ai-session-directory ul {
+  list-style: none;
+  margin: var(--space-2) 0;
+  padding: 0;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.ai-session-directory li {
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+}
+.ai-session-directory li.clickable {
+  cursor: pointer;
+}
+.ai-session-directory li.clickable:hover {
+  background: var(--surface-2);
+}
+.ai-session-title {
+  margin-top: 2px;
+}
+.ai-session-status {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.ai-session-status-minimized {
+  background: var(--change-added);
+}
+.ai-session-status-ended {
+  background: var(--text-muted);
+}
+
+.ai-wait {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+}
+.ai-wait-inline {
+  align-self: flex-start;
+  align-items: flex-start;
+  padding: var(--space-1) 0;
+}
+.ai-wait-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+}
+.ai-shield-spin {
+  color: var(--accent);
+  animation: ai-shield-spin 1.4s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes ai-shield-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ai-rainbow-dots {
+  display: flex;
+  gap: 10px;
+}
+.ai-rainbow-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  animation: ai-rainbow-bounce 1s ease-in-out infinite;
+}
+@keyframes ai-rainbow-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0) scale(0.8);
+    opacity: 0.6;
+  }
+  40% {
+    transform: translateY(-10px) scale(1.15);
+    opacity: 1;
+  }
+}
+
 .hops {
   list-style: none;
   margin: var(--space-2) 0 0;
@@ -1106,4 +1352,76 @@ tr.clickable {
 
 tr.clickable:hover td {
   background: var(--surface-2);
+}
+
+.floating-overlay {
+  position: fixed;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow:
+    0 20px 50px rgba(0, 0, 0, 0.28),
+    0 2px 8px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+.floating-overlay-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px var(--space-3);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  user-select: none;
+  flex-shrink: 0;
+}
+.floating-overlay-header:active {
+  cursor: grabbing;
+}
+.floating-overlay-title {
+  font-weight: 600;
+  font-size: 14px;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.floating-overlay-header-extra {
+  display: flex;
+  gap: var(--space-1);
+}
+.floating-overlay-body {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-3);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.floating-overlay-resize {
+  position: absolute;
+}
+.floating-overlay-resize-e {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+.floating-overlay-resize-s {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  cursor: ns-resize;
+}
+.floating-overlay-resize-se {
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
 }

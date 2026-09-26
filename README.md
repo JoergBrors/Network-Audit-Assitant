@@ -21,7 +21,7 @@ cp .env.example .env.local   # VITE_ENTRA_CLIENT_ID (und ggf. VITE_ENTRA_AUTHORI
 npm run dev                  # http://localhost:5173
 
 # Produktions-Build (statische Dateien in dist/, inkl. Content Security Policy)
-npm run build && npm run preview
+
 ```
 
 ## Web-UI
@@ -79,3 +79,4 @@ Das Tool ändert keine Azure-Ressourcen. Jeder Azure-Client läuft durch eine Pi
 | [RESOURCE-GRAPH-QUERIES.md](RESOURCE-GRAPH-QUERIES.md) | Query-Katalog, ARG-Abdeckung, ARM-Enrichment |
 | [NETWORK-GRAPH-MODEL.md](NETWORK-GRAPH-MODEL.md) | Normalisiertes Modell, Knoten, Beziehungen, Heuristiken, Sichtbarkeit |
 | [SNAPSHOT-AND-DRIFT.md](SNAPSHOT-AND-DRIFT.md) | Snapshots, Vergleich, Drift-Kategorien, Diff-Export |
+npm run build && npm run preview

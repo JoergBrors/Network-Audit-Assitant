@@ -1,6 +1,6 @@
 # IMPLEMENTATION PLAN — Azure Network Audit Assistant
 
-Stand 2026-09-25 (Review nach Phase 7 + vorgezogenem Snapshot-Vergleich) · Referenz: [ARCHITECTURE.md](ARCHITECTURE.md)
+Stand 2026-09-26 (Sanitizer + KI-Analyse vorgezogen aus Phase 16) · Referenz: [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ## 0. Statusübersicht
 
@@ -23,9 +23,10 @@ Legende: ✅ fertig · ◐ teilweise (Kern umgesetzt, Restpunkte offen) · ○ o
 | 13 | Semantic Diff / Drift | ◐ | Diff, Kategorien, UI-Markierungen, Diff-Export fertig; Finding-Lifecycle, Pfad-Drift, Timeline, CLI offen |
 | 14 | JSON-Assessment-Export | ◐ | Export inkl. Default-Pfaden je Familie und IPv6-Bypass-Gaps; Dual-Stack-/Findings-Sektionen, CSV, JSON-Schema offen |
 | 15 | Draw.io-Export | ○ | nicht begonnen |
-| 16 | Sanitization & Security | ○ | Secret-Blocklist in der Normalisierung vorhanden; Sanitizer, `SECURITY.md` offen |
-| 17 | Tests (Konsolidierung) | ◐ | 187 Tests; Coverage-Messung, Akzeptanzsuite, `test:live` offen |
+| 16 | Sanitization & Security | ◐ | Sanitizer (`sanitizeExport`) fertig und getestet, per UI aufrufbar; CLI-Flag und `SECURITY.md` offen |
+| 17 | Tests (Konsolidierung) | ◐ | 209 Tests; Coverage-Messung, Akzeptanzsuite, `test:live` offen |
 | 18 | Dokumentation | ◐ | 8 von 10 Dokumenten vorhanden; `IPV6-ASSESSMENT.md`, `ASSESSMENT-RULES.md`, `SECURITY.md`, `docs/ACCEPTANCE.md` offen |
+| 22 | KI-Analyse (Azure OpenAI) | ◐ | Sanitisierter Export → Azure OpenAI → Findings + Implementierungsplan-Vorschlag, per UI-Button; CLI-Äquivalent und Persistenz offen |
 
 **Abweichung von der Reihenfolge:** Auf Wunsch des Auftraggebers wurden Ansicht/Drilldown (Phase 7), JSON-Export/-Import (Teile 12/14) und der Snapshot-Vergleich (Kern 13) vor Phase 5 und 8–11 umgesetzt. Die dort vorgesehenen Analyse-Ergebnisse (Routing, Dual-Stack, Findings) fließen nachträglich in Export und Vergleich ein; der Export kennzeichnet fehlende Teile in `metadata.coverage`.
 
@@ -34,7 +35,9 @@ Legende: ✅ fertig · ◐ teilweise (Kern umgesetzt, Restpunkte offen) · ○ o
 1. **Phase 10** Dual-Stack-Gap-Analyse und **Phase 11** Assessment Engine – bauen direkt auf den Pfadergebnissen auf; danach Akzeptanztests 1, 2, 4 (Finding-Sicht) und 7 sowie Finding-Lifecycle im Diff.
 2. Rest **Phase 5** (Front Door, Diagnostic Settings, ExpressRoute-Circuits, Cache) – schließt Monitoring-Gaps.
 3. Rest Phase 9: optionale Effective-Routes-API (`--effective-routes`) zur Bestätigung der synthetisierten Routen; Exposure-Findings in Phase 11 übernehmen.
-4. **Phase 12** `configurationHash` + Baseline, danach 15 (Draw.io) und 16 (Sanitizing).
+4. **Phase 12** `configurationHash` + Baseline, danach 15 (Draw.io).
+5. Rest **Phase 16**: CLI-Flag `--sanitize`/`--sanitize-key`, `SECURITY.md` (Threat Model inkl. R20/R21 aus ARCHITECTURE.md).
+6. Rest **Phase 22**: Persistenz der KI-Analyseergebnisse im Snapshot/Export, CLI-Äquivalent zum UI-Button.
 
 ---
 
@@ -177,10 +180,23 @@ Freigegeben am 2026-09-25 mit folgenden Entscheidungen: strikt read-only; BGP-Ro
 **Deliverables:** `src/export/drawio` (mxfile-XML, Layer, Kantenstile, Azure-Shapes, Positionen aus ELK in Node), SVG-Export, PNG (UI).
 **Tests:** XML wohlgeformt, alle Layer, Kantenstile, eindeutige IDs, Golden File; manuelle Prüfung in diagrams.net.
 
-## Phase 16 — Sanitization & Security ○
+## Phase 16 — Sanitization & Security ◐
 
-**Deliverables:** `src/export/sanitize` (HMAC-Pseudonyme, präfixerhaltende Public-IP-Abbildung, ID-Umschreibung, Secret-Blocklist als zweite Linie), `SECURITY.md` (Threat Model: MSAL-Tokens im Browser, CSP, Redirect-Bridge, Exporte, Read-only-Garantie).
-**Tests:** Beziehungen/Containment/Präfixlängen erhalten, Analyseergebnisse identisch, Leak-Scan, gleicher Key ⇒ gleiche Pseudonyme.
+**Umgesetzt:** `src/export/sanitize.ts` (`sanitizeExport`) – HMAC-SHA-256-Pseudonyme (Schlüssel wird pro Aufruf übergeben, nie gespeichert), präfixerhaltende Public-IP-Abbildung (RFC 5737/3849), ID-Umschreibung (auch in zusammengesetzten Graph-Kanten-IDs und Freitextfeldern über einen zweiten Whole-Word-Durchlauf), Ausnahme für Azure-Pflichtnamen (`AzureFirewallSubnet` u. Ä.), Secret-Feld-Entfernung unabhängig vom Wert als zweite Linie neben der bestehenden Normalisierungs-Blocklist. UI-Einstieg über den Button „KI-Analyse“ (§ 22 ARCHITECTURE.md).
+**Real verifiziert:** Gegen die Hub-Spoke-Fixture – keine reale Subscription-/Resource-Group-/Resource-ID/-Name/Public-IP im sanitisierten Output, Struktur/Zählwerte/Präfixlängen/Graph-Kanten identisch, Determinismus über gleichen Schlüssel bestätigt.
+**Offen:** CLI-Flag `--sanitize`/`--sanitize-key` (aktuell nur aus der Web-UI aufrufbar), `SECURITY.md` (Threat Model: MSAL-Tokens im Browser, CSP, Redirect-Bridge, Exporte, Read-only-Garantie, Azure-OpenAI-Key im Bundle – Risiken R20/R21 in ARCHITECTURE.md bereits vorgezogen dokumentiert).
+**Tests:** `tests/export/sanitize.test.ts` – Determinismus, Schlüsselwechsel, keine Leckage (auch in zusammengesetzten IDs/Freitext), Plattformnamen bleiben erhalten, strukturelle Felder identisch, Public-IP-Ersetzung, Secret-Feld-Entfernung.
+
+## Phase 22 — KI-Analyse (Azure OpenAI) ◐ *(neu, zahlt auf Lastenheft § 59–63 ein)*
+
+**Umgesetzt:** `src/ai/azureOpenAi.ts` (Responses-API-Client, reiner `fetch`, kein SDK; Datei-Upload, Vector-Store-Erstellung/-Polling/-Löschung; Retry mit exponentiellem Backoff + `Retry-After`-Unterstützung auf `429`/`5xx` für alle Endpunkte, Standard 4 Versuche). `src/ai/analyze.ts` implementiert eine **Chat-Session auf `file_search`-Basis** (Details ARCHITECTURE.md § 22): der sanitisierte Export wird einmalig als Datei hochgeladen und in einem temporären Vector Store indiziert; jeder Chat-Turn (Sitzungsstart, Folgefragen, Report) läuft mit aktiviertem `file_search`-Tool gegen diesen Store und per `previous_response_id`-Chaining – das Modell ruft nur die für die jeweilige Frage relevanten Ausschnitte ab, statt den kompletten Export im Prompt zu tragen. „Report erzeugen“ kombiniert `file_search` mit Structured Outputs (`text.format: json_schema`, striktes Schema) zu einem typisierten `AiReport` (`summary`, `findings[]`, `recommendations[]`). `src/export/aiReportPdf.ts` rendert daraus clientseitig (`pdf-lib`, kein Server) ein herunterladbares PDF; JSON-Download bleibt zusätzlich verfügbar. UI-Panel `AiAnalysisPanel.tsx` ist ein Chat-Fenster mit gestaffelter Ladeanzeige: ein rotierendes Netzwerk-Schild-Icon mit Klartext-Status für normale Wartezeiten, zusätzlich fünf von der Mitte nach außen hüpfende Regenbogen-Punkte ab 4 Sekunden Wartezeit (typischerweise ein Rate-Limit-Retry). Schließen des Panels löscht Datei und Vector Store (`endSession`). Konfiguration weiterhin über `VITE_AZURE_OPENAI_ENDPOINT`/`_API_KEY`/`_MODEL` in `.env.local`.
+**Performance-Fix im Sanitizer:** `sanitizeExport()` importierte den HMAC-Schlüssel früher pro pseudonymisiertem String neu (mehrere tausend `crypto.subtle.importKey`-Aufrufe bei einem großen Export). `Pseudonymizer.create()` importiert den Schlüssel jetzt einmal pro Lauf; Ergebnis unverändert (`tests/export/sanitize.test.ts` bleibt grün).
+**Ingestion-Fix (`"Verarbeitung der hochgeladenen Datei fehlgeschlagen: An internal error occurred"`):** Azures eigene Datei-Verarbeitung schlug real mit `last_error.code = "server_error"` fehl. Zwei Gegenmaßnahmen: (1) `uploadFileSearchDocument()` formatiert den einzeiligen `JSON.stringify`-Export vor dem Upload zu mehrzeiligem, eingerücktem JSON um (eine sehr lange einzelne Zeile ist für die Text-Extraktion anfälliger) und lädt ihn mit MIME `text/plain` statt `application/json` hoch; (2) ein `server_error`/`failed`-Status wird bis zu zweimal durch erneutes Anhängen der Datei an denselben Vector Store und erneutes Abwarten der Ingestion behoben, bevor der Fehler nach oben gereicht wird.
+**Historie/verworfene Ansätze:** (1) ein Aufruf mit dem kompletten Export überschritt das Token-Rate-Limit (`HTTP 429 rate_limit_exceeded`, `gpt-5-mini`/`germanywestcentral`); (2) Batching (ein Aufruf je VNet) war bei ~80 VNets spürbar langsam; (3) eine Chat-Session, die den Export unverändert als erste Nachricht sendete, überschritt das Limit weiterhin, da der komplette Export weiterhin in einem Request steckte. `file_search` gegen einen temporären Vector Store löst das grundsätzlich, da der Export nie mehr vollständig Teil eines einzelnen Prompts ist.
+**Fenster/UI-Umbau (Details ARCHITECTURE.md § 22.4):** Das Panel ist jetzt ein frei verschieb- und größenveränderbares Floating-Overlay statt eines festen Seitenbereichs. `src/ui/workspace/FloatingOverlay.tsx` (Titelleiste zum Ziehen, drei Resize-Griffe, Position/Größe in `localStorage` gemerkt und in den sichtbaren Bereich geklemmt) wird generisch verwendet und umschließt `AiAnalysisPanel.tsx`, das jetzt wie ein modernes Chat-Fenster aussieht (Sprechblasen statt Zeilen, eigene Composer-Zeile). `src/ui/workspace/aiSessionDirectory.ts` führt ein rein browserlokales (`localStorage`) Verzeichnis vergangener Sitzungen (nur Metadaten: Zeitpunkt, Titel, Nachrichtenzahl, Status – nie Chatinhalte/Export/Schlüssel), aufrufbar über einen Button in der Fenster-Titelleiste. Aus der Zwischenablage eingefügte Bilder (`onPaste`) werden als Base64-Data-URI der nächsten Chat-Nachricht als `input_image`-Inhalt beigefügt (`callAzureOpenAi({images})`, strukturiertes `input`-Array statt reinem String) – **nicht** in den Vector Store hochgeladen, da `file_search` nur textbasierte Dokumente indiziert. Die UI warnt sichtbar, sobald ein Bild angehängt ist, da es (anders als der Export) nicht durch `sanitizeExport()` läuft.
+**Bewusste Entscheidung:** Läuft direkt aus dem Browser (kein eigenes Backend) – siehe ARCHITECTURE.md § 22.6 und Risiken R20 (Key im Bundle) und R21 (Restrisiko Re-Identifikation trotz Sanitizing). Der Vector Store ist bewusst so kurzlebig wie die Sitzung (Löschung beim Schließen), um die zusätzlichen `file_search`-Kosten zu begrenzen.
+**Offen:** CLI-Äquivalent, Kostentracking am Client, Cross-VNet-Findings hängen von dem ab, was im Chat tatsächlich erfragt wurde (kein automatischer Vollständigkeits-Scan), Sitzungsverzeichnis ist nicht geräteübergreifend synchronisiert.
+**Tests:** `tests/ai/azureOpenAi.test.ts` (HTTP-Contract, `file_search`-Tool-Aktivierung, Bild-Input als strukturiertes `input`-Array, `previous_response_id`-Chaining, `json_schema`-Structured-Output-Anfrage, Datei-Upload/Vector-Store-Erstellung/Anhängen/Polling/Löschung inkl. Fehlerfällen, Re-Indentierung vor dem Upload, Ingestion-Retry bei `server_error` inkl. Erschöpfung aller Versuche, Retry bei 429 inkl. `Retry-After`-Header, Backoff-Grenze), `tests/ai/analyze.test.ts` (eindeutige lokale Sitzungs-ID, Sitzungsstart sendet nachweislich nur sanitisierte Daten in der hochgeladenen Datei, Fortschrittsphasen in der richtigen Reihenfolge, Cleanup bei fehlgeschlagenem Sitzungsstart, Folgenachrichten behalten `file_search` aktiv und senden nur die neue Nachricht plus optionale Bilder, Report-Erzeugung inkl. Schema-Anfrage und robustem JSON-Parsing/Fallback/Filterung ungültiger Findings, `endSession` löscht Datei und Vector Store), `tests/export/aiReportPdf.test.ts` (gültiges PDF-Signaturbyte, leerer Report, mehrseitiger Report mit langem Text), `tests/ui/workspace/aiSessionDirectory.test.ts` (Anlegen/Aktualisieren/Beenden von Einträgen, Titel-Kürzung, Sortierung nach Startzeit, robustes Verhalten ohne `localStorage`, keine Chatinhalte im gespeicherten Feldsatz).
 
 ## Phase 17 — Tests (Konsolidierung) ◐
 
