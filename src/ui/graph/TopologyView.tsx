@@ -7,6 +7,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useStore,
   type Edge,
   type Node,
 } from "@xyflow/react";
@@ -16,7 +17,7 @@ import type { IpViewMode, VisibleEdge, VisibleGraph } from "../../graph/view.js"
 import type { ComparisonGraph } from "../../drift/diff.js";
 import { LayoutClient } from "./layoutClient.js";
 import type { Positioned } from "./elkGraph.js";
-import { NODE_COMPONENTS, type TopologyNodeData } from "./nodes.js";
+import { detailOf, NODE_COMPONENTS, type TopologyNodeData } from "./nodes.js";
 import { categoryOf, DIRECTED, EDGE_CLASS } from "./nodeStyle.js";
 
 export interface TopologyViewProps {
@@ -69,6 +70,7 @@ function TopologyCanvas({
   const flow = useReactFlow();
   const lastFitKey = useRef<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | undefined>();
+  const canvasRef = useRef<HTMLDivElement>(null);
   const selectedEdge = useMemo(
     () => (selectedEdgeId ? view.edges.find((e) => e.id === selectedEdgeId) : undefined),
     [selectedEdgeId, view],
@@ -213,26 +215,9 @@ function TopologyCanvas({
   }
 
   return (
-    <div className="topology-canvas">
+    <div className="topology-canvas" ref={canvasRef}>
       {!ready && !error && <div className="topology-overlay">Layout wird berechnet …</div>}
       {error && <div className="topology-overlay status-error">Layout-Fehler: {error}</div>}
-      {view.truncated && (
-        <div className="topology-notice status-warn" role="status">
-          {view.capped ? (
-            <>
-              <strong>Ansicht gekürzt:</strong> {view.totalCandidates} Elemente, gezeigt werden die ersten{" "}
-              {view.nodes.length}.
-            </>
-          ) : (
-            <>
-              <strong>Detailstufe automatisch auf {view.effectiveLevel} reduziert</strong> –{" "}
-              {view.totalCandidates} Elemente wären zu viele für eine lesbare Darstellung.
-            </>
-          )}{" "}
-          Für mehr Details Elementtypen ausblenden, eine Subscription filtern, ein Element aufklappen
-          (Doppelklick) oder „Fokus“ setzen.
-        </div>
-      )}
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -250,7 +235,7 @@ function TopologyCanvas({
         nodesConnectable={false}
         edgesFocusable={false}
         onlyRenderVisibleElements
-        minZoom={0.05}
+        minZoom={0.01}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
         zoomOnDoubleClick={false}
@@ -262,6 +247,7 @@ function TopologyCanvas({
           nodeClassName={(n) => (typeof n.className === "string" ? n.className : "")}
         />
         <Controls showInteractive={false} />
+        <ZoomAttributes target={canvasRef} />
       </ReactFlow>
       {selectedEdge && (
         <EdgeInfo
@@ -316,4 +302,19 @@ function edgeColorOf(type: VisibleEdge["type"]): string {
   return ["edge-contains", "edge-internet", "edge-attached"].includes(cls)
     ? "var(--text-muted)"
     : `var(--${cls})`;
+}
+
+/**
+ * Publishes the zoom to CSS (`--zoom-inv`, `data-lod` on the canvas) without re-rendering the graph:
+ * overview labels scale against the zoom, edge labels hide while zoomed out.
+ */
+function ZoomAttributes({ target }: { target: React.RefObject<HTMLDivElement | null> }) {
+  const zoom = useStore((s) => s.transform[2]);
+  useEffect(() => {
+    const el = target.current;
+    if (!el) return;
+    el.style.setProperty("--zoom-inv", String(1 / Math.max(zoom, 0.01)));
+    el.dataset["lod"] = String(detailOf(zoom));
+  }, [zoom, target]);
+  return null;
 }
