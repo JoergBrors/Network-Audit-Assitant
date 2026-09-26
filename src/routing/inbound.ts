@@ -140,9 +140,9 @@ function evaluate(
   let decisionHops: Omit<PathHop, "index">[] = [];
   let firstBlock: Omit<PathHop, "index"> | undefined;
   let uncertain = false;
-  for (const port of options.ports) {
-    const check = checkSecurity(ctx, "Inbound", target.subnet, target.nic, {
-      source: options.source,
+  const checkPort = (port: number, source: string) =>
+    checkSecurity(ctx, "Inbound", target.subnet, target.nic, {
+      source,
       destination: target.address,
       protocol: options.protocol,
       port,
@@ -151,6 +151,8 @@ function evaluate(
       destinationAsgIds: target.nic?.ipConfigurations.find((c) => c.privateIpAddress === target.address)
         ?.applicationSecurityGroupIds,
     });
+  for (const port of options.ports) {
+    const check = checkPort(port, options.source);
     if (check.uncertain) uncertain = true;
     if (!check.blocked) {
       openPorts.push(port);
@@ -160,6 +162,12 @@ function evaluate(
       const sources = options.source === INTERNET_CLIENT[family] ? restrictedSources(ctx, target, port) : [];
       if (sources.length) restricted.push({ port, sources });
     }
+  }
+  // Only selected sources get through: show the allowing controls for the first of them.
+  if (decisionHops.length === 0 && restricted.length > 0) {
+    const { port, sources } = restricted[0]!;
+    const check = checkPort(port, sources[0]!.split("/")[0]!);
+    if (!check.blocked) decisionHops = check.hops;
   }
   for (const h of decisionHops) add(h);
 

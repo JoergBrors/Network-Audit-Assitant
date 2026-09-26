@@ -164,6 +164,10 @@ describe("inbound Internet → workload paths", () => {
       restricted: [{ port: 3389, sources: ["203.0.113.0/28"] }],
       asymmetricRouting: true,
     });
+    // The NSG that lets the admin range in is part of the path.
+    expect(nat.hops.find((h) => h.nodeId === lc(F.NSG_SPOKE))).toMatchObject({
+      decision: { control: "nsg", access: "Allow", rule: "rdp-admins" },
+    });
   });
 
   it("detects asymmetric routing when the backend subnet sends 0.0.0.0/0 to the firewall", () => {
