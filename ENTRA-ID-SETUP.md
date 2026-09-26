@@ -187,7 +187,7 @@ VITE_AZURE_OPENAI_MODEL=<deployment>          # z. B. gpt-5-mini
 VITE_AZURE_OPENAI_SCOPE=
 # optional: minimal | low | medium | high (Standard für Reasoning-Modelle: low)
 VITE_AZURE_OPENAI_REASONING_EFFORT=
-# leer lassen: Entra ID. Nur als Rückfall ohne Anmeldung (landet im Bundle!):
+# leer lassen: Entra ID. Gesetzt: Schlüssel hat immer Vorrang, keine Anmeldung nötig (landet im Bundle!):
 VITE_AZURE_OPENAI_API_KEY=
 ```
 

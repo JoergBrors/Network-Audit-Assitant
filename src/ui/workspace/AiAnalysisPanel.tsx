@@ -114,8 +114,12 @@ export function AiAnalysisPanel({
   onClose: () => void;
 }) {
   const config = useMemo(() => readAzureOpenAiConfigFromEnv(), []);
-  const auth: "entra" | "key" | "none" =
-    credential && accountName ? "entra" : config?.apiKey ? "key" : "none";
+  // An explicitly configured API key wins, so no Microsoft sign-in is needed for the AI.
+  const auth: "entra" | "key" | "none" = config?.apiKey
+    ? "key"
+    : credential && accountName
+      ? "entra"
+      : "none";
   const ctx = useMemo<AiContext | undefined>(() => {
     if (!config || auth === "none") return undefined;
     const tokenProvider =
