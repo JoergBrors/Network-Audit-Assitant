@@ -1,4 +1,4 @@
-import { PAAS_SERVICE_TYPES } from "../../models/paasCatalog.js";
+import { PAAS_AUX_TYPES, PAAS_SERVICE_TYPES } from "../../models/paasCatalog.js";
 
 /**
  * Azure Resource Graph query catalog. Specification: RESOURCE-GRAPH-QUERIES.md.
@@ -229,7 +229,7 @@ export const PAAS_QUERIES: readonly ArgQueryDefinition[] = [
     "Q-PAAS",
     "resources",
     "PaaS services: public network access, firewall/ACLs, private endpoint connections, VNet integration",
-    PAAS_SERVICE_TYPES.map((t) => t.type),
+    [...PAAS_SERVICE_TYPES.map((t) => t.type), ...PAAS_AUX_TYPES],
   ),
 ];
 

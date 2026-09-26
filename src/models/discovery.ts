@@ -117,6 +117,8 @@ export const EnrichmentSchema = z.object({
         firewallRules: z.array(z.unknown()),
         virtualNetworkRules: z.array(z.unknown()),
         siteConfig: z.array(z.unknown()),
+        /** Further sub-resources by name (networkRuleSet, sessionHosts, managedVirtualNetworks, …). */
+        extra: z.record(z.string(), z.array(z.unknown())).optional(),
         status: z.enum(["ok", "partial", "not-accessible"]),
       }),
     )

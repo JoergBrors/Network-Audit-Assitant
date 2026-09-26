@@ -401,6 +401,73 @@ export type PublicNetworkAccess = "Enabled" | "Disabled" | "SecuredByPerimeter" 
  */
 export type PaasExposure = "private" | "restricted" | "public" | "unknown";
 
+/** One inbound access rule of a PaaS service (IP restriction, firewall rule, authorized range). */
+export interface PaasAccessRule {
+  name?: string | undefined;
+  /** IP, CIDR, range, service tag or subnet ID. */
+  source: string;
+  action: "Allow" | "Deny";
+  priority?: number | undefined;
+  /** Endpoint the rule applies to when a service has several (e.g. "SCM/Kudu", "API-Server"). */
+  scope?: string | undefined;
+}
+
+/**
+ * How a PaaS service is reached (Microsoft terms): `internet` = public endpoint open,
+ * `internet-restricted` = public endpoint with IP/subnet rules, `vnet` = only from the VNet
+ * (internal load balancer / internal environment), `private-endpoint` = only via Private Link,
+ * `none` = no inbound endpoint (e.g. container app without ingress).
+ */
+export type PaasIngressMode =
+  "internet" | "internet-restricted" | "vnet" | "private-endpoint" | "none" | "unknown";
+
+/**
+ * How a PaaS service reaches other networks: `azure-default` = platform outbound (shared public IPs,
+ * not controllable), `vnet` = all traffic through a customer subnet (UDR/NAT/firewall apply),
+ * `vnet-partial` = only private (RFC 1918) traffic through the subnet, `managed-vnet` = Microsoft
+ * managed VNet (managed private endpoints / outbound rules), `load-balancer` / `nat-gateway` / `udr`
+ * = AKS outbound types, `none` = the service does not initiate customer traffic.
+ */
+export type PaasEgressMode =
+  | "azure-default"
+  | "vnet"
+  | "vnet-partial"
+  | "managed-vnet"
+  | "load-balancer"
+  | "nat-gateway"
+  | "udr"
+  | "none"
+  | "unknown";
+
+export interface PaasIngress {
+  mode: PaasIngressMode;
+  summary: string;
+  rules: PaasAccessRule[];
+  /** Inbound IPs (environment static IP, load balancer frontends). */
+  ips: string[];
+  /** Service-specific settings (label → value), e.g. "Transport", "Client-Zertifikat". */
+  details: Record<string, string>;
+}
+
+export interface PaasEgress {
+  mode: PaasEgressMode;
+  summary: string;
+  /** Customer subnets outbound traffic leaves through (UDR / NAT gateway / NSG apply there). */
+  subnetIds: string[];
+  /** Public source IPs of outbound traffic. */
+  outboundIps: string[];
+  /** Outbound restricted to these targets (FQDN allow list, approved outbound rules). */
+  allowedTargets?: string[] | undefined;
+  details: Record<string, string>;
+}
+
+/** Resource related to a PaaS service's network path (environment, load balancer, session host, …). */
+export interface PaasLink {
+  id: string;
+  label: string;
+  direction: "ingress" | "egress" | "other";
+}
+
 export interface PaasServiceEntity extends BaseEntity {
   /** Human-readable service, e.g. "Storage Account". */
   service: string;
@@ -439,6 +506,11 @@ export interface PaasServiceEntity extends BaseEntity {
   minimumTlsVersion?: string | undefined;
   exposure: PaasExposure;
   exposureReasons: string[];
+  /** Inbound configuration (optional: exports before schema 0.7 do not carry it). */
+  ingress?: PaasIngress | undefined;
+  /** Outbound configuration. */
+  egress?: PaasEgress | undefined;
+  links?: PaasLink[] | undefined;
 }
 
 export interface VirtualMachineEntity extends BaseEntity {

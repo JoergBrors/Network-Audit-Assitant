@@ -65,7 +65,8 @@ export function createArmReader(
         `${ARM_ENDPOINT}${path}${path.includes("?") ? "&" : "?"}api-version=${apiVersion}`;
       for (let page = 0; url && page < 100; page++) {
         const body = await get(url);
-        const items = body[itemsKey];
+        // An empty items key reads a single resource (e.g. networkRuleSets/default, config/web).
+        const items = itemsKey ? body[itemsKey] : [body];
         if (Array.isArray(items)) out.push(...(items as unknown[]));
         url = typeof body["nextLink"] === "string" ? body["nextLink"] : undefined;
       }
