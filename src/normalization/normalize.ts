@@ -38,6 +38,7 @@ import type {
   RuleCollectionGroupEntity,
   ScaleSetEntity,
   SubnetEntity,
+  SubnetServiceLink,
   SubscriptionEntity,
   VirtualMachineEntity,
   VirtualNetworkGatewayEntity,
@@ -367,6 +368,11 @@ function normalizeVnet(r: RawResource, inv: NormalizedInventory): void {
       connectedResourceIds: [...connected].sort(),
       ipConfigurationCount: ipConfigIds.length,
     };
+    const links = [
+      ...serviceLinksOf(sp["serviceAssociationLinks"], "serviceAssociation"),
+      ...serviceLinksOf(sp["resourceNavigationLinks"], "resourceNavigation"),
+    ];
+    if (links.length) subnet.serviceLinks = links;
     inv.subnets.push(subnet);
     vnet.subnetIds.push(id);
   }
@@ -1069,6 +1075,21 @@ function flatProperties(p: Obj): Record<string, string | number | boolean | stri
     }
   }
   return out;
+}
+
+/** Subnet `serviceAssociationLinks` / `resourceNavigationLinks` (`properties.linkedResourceType`, `properties.link`). */
+function serviceLinksOf(value: unknown, kind: SubnetServiceLink["kind"]): SubnetServiceLink[] {
+  return arr(value).map((l) => {
+    const lo = obj(l);
+    const lp = obj(lo["properties"]);
+    const link = str(lp["link"]);
+    return {
+      kind,
+      name: str(lo["name"]),
+      linkedResourceType: str(lp["linkedResourceType"]),
+      linkId: link?.startsWith("/subscriptions/") ? normalizeId(link) : undefined,
+    };
+  });
 }
 
 function normalizeGeneric(r: RawResource, kind: string): GenericNetworkEntity {

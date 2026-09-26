@@ -1,7 +1,22 @@
 import type { EdgeType, GraphNode, NodeType } from "../../models/graph.js";
+import { PAAS_SERVICE_TYPES, PAAS_TYPE_INFO, type PaasCategory } from "../../models/paasCatalog.js";
 
 export type NodeCategory =
-  "org" | "network" | "security" | "routing" | "compute" | "edge" | "dns" | "hybrid" | "external";
+  | "org"
+  | "network"
+  | "security"
+  | "routing"
+  | "compute"
+  | "edge"
+  | "dns"
+  | "hybrid"
+  | "external"
+  | "app"
+  | "data"
+  | "integration"
+  | "analytics"
+  | "vdi"
+  | "monitoring";
 
 const CATEGORY: Partial<Record<NodeType, NodeCategory>> = {
   tenant: "org",
@@ -95,6 +110,108 @@ const ABBREVIATION: Partial<Record<NodeType, string>> = {
 
 export function abbreviationOf(type: NodeType): string {
   return ABBREVIATION[type] ?? "RES";
+}
+
+/** Service-specific abbreviation per ARM type (PaaS nodes). */
+const PAAS_ABBREVIATION: Record<string, string> = {
+  "microsoft.storage/storageaccounts": "ST",
+  "microsoft.sql/servers": "SQL",
+  "microsoft.sql/managedinstances": "SQLMI",
+  "microsoft.dbforpostgresql/flexibleservers": "PG",
+  "microsoft.dbformysql/flexibleservers": "MYSQL",
+  "microsoft.documentdb/databaseaccounts": "COSMOS",
+  "microsoft.cache/redis": "REDIS",
+  "microsoft.keyvault/vaults": "KV",
+  "microsoft.web/sites": "APP",
+  "microsoft.web/staticsites": "SWA",
+  "microsoft.web/serverfarms": "ASP",
+  "microsoft.web/hostingenvironments": "ASE",
+  "microsoft.apimanagement/service": "APIM",
+  "microsoft.servicebus/namespaces": "SB",
+  "microsoft.eventhub/namespaces": "EH",
+  "microsoft.eventgrid/topics": "EGT",
+  "microsoft.eventgrid/domains": "EGD",
+  "microsoft.signalrservice/signalr": "SIGR",
+  "microsoft.signalrservice/webpubsub": "WPS",
+  "microsoft.appconfiguration/configurationstores": "APPC",
+  "microsoft.automation/automationaccounts": "AUTO",
+  "microsoft.logic/workflows": "LOGIC",
+  "microsoft.devices/iothubs": "IOT",
+  "microsoft.cognitiveservices/accounts": "AI",
+  "microsoft.search/searchservices": "SRCH",
+  "microsoft.machinelearningservices/workspaces": "AML",
+  "microsoft.containerregistry/registries": "ACR",
+  "microsoft.containerservice/managedclusters": "AKS",
+  "microsoft.app/managedenvironments": "ACAE",
+  "microsoft.app/containerapps": "ACA",
+  "microsoft.app/jobs": "ACAJ",
+  "microsoft.containerinstance/containergroups": "ACI",
+  "microsoft.datafactory/factories": "ADF",
+  "microsoft.synapse/workspaces": "SYN",
+  "microsoft.databricks/workspaces": "DBX",
+  "microsoft.purview/accounts": "PVW",
+  "microsoft.kusto/clusters": "ADX",
+  "microsoft.fabric/capacities": "FAB",
+  "microsoft.fabric/privatelinkservicesforfabric": "FABPL",
+  "microsoft.powerbi/privatelinkservicesforpowerbi": "PBIPL",
+  "microsoft.powerbidedicated/capacities": "PBIE",
+  "microsoft.batch/batchaccounts": "BATCH",
+  "microsoft.recoveryservices/vaults": "RSV",
+  "microsoft.desktopvirtualization/hostpools": "AVDHP",
+  "microsoft.desktopvirtualization/workspaces": "AVDWS",
+  "microsoft.cdn/profiles": "AFD",
+  "microsoft.servicenetworking/trafficcontrollers": "AGC",
+  "microsoft.devopsinfrastructure/pools": "MDP",
+  "microsoft.dashboard/grafana": "GRAF",
+  "microsoft.insights/components": "APPI",
+  "microsoft.operationalinsights/workspaces": "LAW",
+  "microsoft.insights/privatelinkscopes": "AMPLS",
+};
+
+const PAAS_GROUP: Record<PaasCategory, NodeCategory> = {
+  storage: "data",
+  database: "data",
+  web: "app",
+  containers: "app",
+  security: "security",
+  integration: "integration",
+  ai: "analytics",
+  analytics: "analytics",
+  vdi: "vdi",
+  edge: "edge",
+  monitoring: "monitoring",
+  other: "app",
+};
+
+const TYPE_BY_LABEL = new Map(PAAS_SERVICE_TYPES.map((t) => [t.label, t.type]));
+
+/** ARM type of a PaaS node (older exports only carry the service label). */
+function paasTypeOf(node: GraphNode): string | undefined {
+  const azureType = node.properties["azureType"];
+  if (typeof azureType === "string") return azureType;
+  const service = node.properties["service"];
+  return typeof service === "string" ? TYPE_BY_LABEL.get(service) : undefined;
+}
+
+/** Abbreviation of a graph node: service-specific for PaaS (FUNC for function apps, AOAI for OpenAI). */
+export function nodeAbbreviation(node: GraphNode): string {
+  if (node.type !== "paasService") return abbreviationOf(node.type);
+  const type = paasTypeOf(node);
+  const kind = typeof node.properties["kind"] === "string" ? node.properties["kind"].toLowerCase() : "";
+  if (type === "microsoft.web/sites") {
+    if (kind.includes("workflowapp")) return "LOGIC";
+    if (kind.includes("functionapp")) return "FUNC";
+  }
+  if (type === "microsoft.cognitiveservices/accounts" && kind === "openai") return "AOAI";
+  return (type && PAAS_ABBREVIATION[type]) ?? "PAAS";
+}
+
+/** Colour group of a graph node: PaaS nodes by service group, others by resource type. */
+export function nodeCategory(node: GraphNode): NodeCategory {
+  if (node.type !== "paasService") return categoryOf(node.type);
+  const type = paasTypeOf(node);
+  const group = type ? PAAS_TYPE_INFO.get(type)?.category : undefined;
+  return group ? PAAS_GROUP[group] : "app";
 }
 
 /** Short addressing summary, e.g. "10.0.0.0/16 · fd00::/48 +2". */

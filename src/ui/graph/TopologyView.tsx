@@ -18,7 +18,7 @@ import type { ComparisonGraph } from "../../drift/diff.js";
 import { LayoutClient } from "./layoutClient.js";
 import type { Positioned } from "./elkGraph.js";
 import { detailOf, NODE_COMPONENTS, type TopologyNodeData } from "./nodes.js";
-import { categoryOf, DIRECTED, EDGE_CLASS } from "./nodeStyle.js";
+import { nodeCategory, DIRECTED, EDGE_CLASS } from "./nodeStyle.js";
 
 export interface TopologyViewProps {
   view: VisibleGraph;
@@ -123,7 +123,7 @@ function TopologyCanvas({
             ? ({ "--edge-color": edgeColor } as CSSProperties)
             : {}),
         },
-        className: `rf-${categoryOf(v.node.type)}${
+        className: `rf-${nodeCategory(v.node)}${
           selectedEdge && (selectedEdge.source === v.node.id || selectedEdge.target === v.node.id)
             ? " rf-edge-end"
             : ""

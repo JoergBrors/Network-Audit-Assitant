@@ -29,6 +29,12 @@ export interface PaasLinkHints {
   applicationGroupIds?: string[] | undefined;
   publicIpIds?: string[] | undefined;
   privateLinkScopeIds?: string[] | undefined;
+  /** App Service: plan the app runs on, VNet name from config/web, route-all flag. */
+  serverFarmId?: string | undefined;
+  webVnetName?: string | undefined;
+  webRouteAll?: boolean | undefined;
+  /** AKS virtual nodes: subnet name of the ACI connector (in the node VNet). */
+  aciSubnetName?: string | undefined;
 }
 
 export const LINK_HINTS = new WeakMap<PaasServiceEntity, PaasLinkHints>();
@@ -237,6 +243,10 @@ export function buildPaasNetwork(
         bool(p["vnetImagePullEnabled"]) ??
         bool(config["vnetImagePullEnabled"]);
       const contentShare = bool(routing["contentShareTraffic"]) ?? bool(p["vnetContentShareEnabled"]);
+      hints.serverFarmId = normalizeId(str(p["serverFarmId"]));
+      hints.webVnetName = str(config["vnetName"]) || undefined;
+      hints.webRouteAll = routeAll;
+      if (hints.serverFarmId) link(hints.serverFarmId, "App Service Plan", "other");
       ingressDetails = details({
         Art: str(p["kind"]) ?? e.kind,
         "Nur HTTPS": bool(p["httpsOnly"]),
@@ -273,6 +283,45 @@ export function buildPaasNetwork(
       });
       if (!subnets.length || !routeAll)
         egressExtra = `Internet-Ziele über ${egressIps.length} mögliche Plattform-Ausgangs-IP(s)`;
+      break;
+    }
+    case "microsoft.web/serverfarms": {
+      ingressMode = "none";
+      ingressRules = [];
+      ingressExtra = "kein eigener Endpunkt – Eingänge über die Apps des Plans";
+      ingressDetails = details({
+        SKU: e.sku,
+        Art: e.kind,
+        Apps: num(p["numberOfSites"]),
+        "App Service Environment": str(obj(p["hostingEnvironmentProfile"])["name"]),
+        Zonenredundant: bool(p["zoneRedundant"]),
+      });
+      // The delegated integration subnet comes from the subnet's service association link.
+      egressMode = "azure-default";
+      egressExtra = "ohne VNet-Integration: Plattform-Ausgang der Apps";
+      break;
+    }
+    case "microsoft.servicenetworking/trafficcontrollers":
+      ingressMode = "internet";
+      ingressRules = [];
+      ingressExtra = "öffentliche Frontends des Application Gateway for Containers (Ingress für AKS)";
+      ingressDetails = details({
+        Konfigurationsendpunkte: strings(p["configurationEndpoints"]).join(", "),
+        "WAF-Policy": str(obj(p["securityPolicyConfigurations"])["wafSecurityPolicy"]) ? "ja" : undefined,
+      });
+      egressMode = "vnet";
+      egressExtra = "zu den Pods über das zugeordnete Subnet";
+      break;
+    case "microsoft.devopsinfrastructure/pools": {
+      ingressMode = "none";
+      ingressRules = [];
+      ingressExtra = "Agents bauen Verbindungen selbst auf (keine eingehenden Ports)";
+      ingressDetails = details({
+        "Max. parallele Agents": num(p["maximumConcurrency"]),
+        "Agent-Profil": str(obj(p["agentProfile"])["kind"]),
+      });
+      egressMode = subnets.length ? "vnet" : "azure-default";
+      if (!subnets.length) egressExtra = "Microsoft-verwaltetes Netz";
       break;
     }
     case "microsoft.web/hostingenvironments": {
@@ -442,6 +491,9 @@ export function buildPaasNetwork(
         .filter((g) => bool(g["enabled"]) !== false)
         .map((g) => str(g["mode"]) ?? "?");
       const pools = arr(p["agentPoolProfiles"]).map((a) => obj(a));
+      const aci = obj(addons["aciConnectorLinux"] ?? addons["aciconnectorlinux"]);
+      if (bool(aci["enabled"]))
+        hints.aciSubnetName = str(obj(aci["config"])["SubnetName"] ?? obj(aci["config"])["subnetName"]);
       const privateCluster = bool(api["enablePrivateCluster"]) === true;
       const authorized = strings(api["authorizedIPRanges"]);
       hints.aksNodeResourceGroup = str(p["nodeResourceGroup"])?.toLowerCase();

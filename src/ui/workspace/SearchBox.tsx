@@ -4,7 +4,7 @@ import type { GraphIndex } from "../../graph/view.js";
 import { matchTag, parseTagQuery, type TagIndex } from "../../graph/tags.js";
 import type { GraphNode } from "../../models/graph.js";
 import { NODE_TYPE_LABELS } from "../../models/graph.js";
-import { abbreviationOf, categoryOf } from "../graph/nodeStyle.js";
+import { nodeAbbreviation, nodeCategory } from "../graph/nodeStyle.js";
 
 const MAX_RESULTS = 40;
 
@@ -94,9 +94,7 @@ export function SearchBox({
                 setOpen(false);
               }}
             >
-              <span className={`type-abbr small cat-${categoryOf(node.type)}`}>
-                {abbreviationOf(node.type)}
-              </span>
+              <span className={`type-abbr small cat-${nodeCategory(node)}`}>{nodeAbbreviation(node)}</span>
               <span className="search-name">{node.name}</span>
               <span className="muted small">
                 {NODE_TYPE_LABELS[node.type]}

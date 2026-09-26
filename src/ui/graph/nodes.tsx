@@ -4,7 +4,7 @@ import type { GraphNode } from "../../models/graph.js";
 import { NODE_TYPE_LABELS } from "../../models/graph.js";
 import type { VisibleNode } from "../../graph/view.js";
 import type { ChangeKind } from "../../drift/diff.js";
-import { abbreviationOf, addressSummary, categoryOf } from "./nodeStyle.js";
+import { nodeAbbreviation, addressSummary, nodeCategory } from "./nodeStyle.js";
 
 export interface TopologyNodeData extends Record<string, unknown> {
   node: GraphNode;
@@ -85,7 +85,7 @@ function Badges({ node }: { node: GraphNode }) {
 
 export const ResourceNode = memo(function ResourceNode({ data, selected }: NodeProps<ResourceFlowNode>) {
   const { node, hiddenChildren, neighbor, emphasis, change, changesBelow } = data;
-  const category = categoryOf(node.type);
+  const category = nodeCategory(node);
   const detail = useStore(selectDetail);
   const className = `topo-node cat-${category} lod-${detail}${selected ? " selected" : ""}${neighbor ? " neighbor" : ""}${emphasisClass(emphasis)}${changeClass(change)}`;
   const title = `${NODE_TYPE_LABELS[node.type]}: ${node.name}${emphasis === "context" ? "\n(Kontext: Beziehung zu passenden Komponenten, passt selbst nicht zum aktiven Filter)" : ""}\n${node.id}`;
@@ -100,7 +100,7 @@ export const ResourceNode = memo(function ResourceNode({ data, selected }: NodeP
     <div className={className} title={title}>
       <Handle type="target" position={Position.Top} className="handle" isConnectable={false} />
       <div className="topo-node-row">
-        <span className="type-abbr">{abbreviationOf(node.type)}</span>
+        <span className="type-abbr">{nodeAbbreviation(node)}</span>
         <span className="topo-node-name">{node.name}</span>
       </div>
       {detail === 2 && (
@@ -127,7 +127,7 @@ export const ResourceNode = memo(function ResourceNode({ data, selected }: NodeP
 
 export const ContainerNode = memo(function ContainerNode({ data, selected }: NodeProps<ContainerFlowNode>) {
   const { node, hiddenChildren, emphasis, change, changesBelow } = data;
-  const category = categoryOf(node.type);
+  const category = nodeCategory(node);
   const detail = useStore(selectDetail);
   return (
     <div
@@ -144,7 +144,7 @@ export const ContainerNode = memo(function ContainerNode({ data, selected }: Nod
         )
       ) : (
         <div className="topo-container-header" title={node.id}>
-          <span className="type-abbr">{abbreviationOf(node.type)}</span>
+          <span className="type-abbr">{nodeAbbreviation(node)}</span>
           <span className="topo-node-name">{node.name}</span>
           {detail === 2 && (
             <>

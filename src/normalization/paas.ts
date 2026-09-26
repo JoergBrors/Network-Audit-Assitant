@@ -132,6 +132,7 @@ const OPEN_WHEN_ENABLED = new Set([
   "microsoft.machinelearningservices/workspaces",
   "microsoft.databricks/workspaces",
   "microsoft.devices/iothubs",
+  "microsoft.servicenetworking/trafficcontrollers",
 ]);
 
 /** Public endpoint enabled unless the property says otherwise. */
@@ -420,7 +421,11 @@ function publicAccessOf(type: string, p: Obj): PublicNetworkAccess {
         : "Disabled";
     case "microsoft.cdn/profiles":
     case "microsoft.logic/workflows":
+    case "microsoft.servicenetworking/trafficcontrollers":
       return "Enabled";
+    case "microsoft.web/serverfarms":
+    case "microsoft.devopsinfrastructure/pools":
+      return "NotApplicable";
     case "microsoft.fabric/capacities":
     case "microsoft.fabric/privatelinkservicesforfabric":
     case "microsoft.powerbi/privatelinkservicesforpowerbi":
@@ -471,6 +476,11 @@ function vnetIntegrationOf(type: string, p: Obj): PaasServiceEntity["vnetIntegra
       return { subnetIds: ids(...arr(p["subnetIds"]).map((s) => obj(s)["id"])), mode: "injection" };
     case "microsoft.kusto/clusters":
       return { subnetIds: ids(obj(p["virtualNetworkConfiguration"])["subnetId"]), mode: "injection" };
+    case "microsoft.devopsinfrastructure/pools":
+      return {
+        subnetIds: ids(obj(obj(p["fabricProfile"])["networkProfile"])["subnetId"]),
+        mode: "injection",
+      };
     case "microsoft.databricks/workspaces": {
       const params = obj(p["parameters"]);
       const vnet = str(obj(params["customVirtualNetworkId"])["value"]);
@@ -500,6 +510,14 @@ export function classifyExposure(
     e.vnetIntegration.mode === "injection" && e.vnetIntegration.subnetIds.length ? "in VNet injiziert" : "",
   ].filter(Boolean);
   switch (e.publicNetworkAccess) {
+    case "NotApplicable":
+      return {
+        exposure: "none",
+        reasons: [
+          "Kein eigener Netzwerk-Endpunkt (Erreichbarkeit über die zugehörigen Ressourcen)",
+          ...privateWays,
+        ],
+      };
     case "Disabled":
       return {
         exposure: "private",

@@ -6,7 +6,7 @@ import { lastSegment } from "../../utils/ids.js";
 import { EXPOSURE_LABEL, PE_DNS_LABEL, peDnsClass } from "../workspace/ServiceDetails.js";
 
 const SEVERITIES: Severity[] = ["HIGH", "MEDIUM", "LOW", "INFO"];
-const EXPOSURES: PaasServiceEntity["exposure"][] = ["public", "restricted", "unknown", "private"];
+const EXPOSURES: PaasServiceEntity["exposure"][] = ["public", "restricted", "unknown", "private", "none"];
 const SERVER_KIND: Record<string, string> = {
   azureDns: "Azure DNS",
   resolverInbound: "Private Resolver",

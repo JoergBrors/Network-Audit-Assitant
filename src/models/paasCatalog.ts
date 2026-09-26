@@ -88,6 +88,14 @@ export const PAAS_SERVICE_TYPES: readonly PaasServiceType[] = [
   { type: "microsoft.databricks/workspaces", label: "Databricks", category: "analytics" },
   { type: "microsoft.purview/accounts", label: "Purview", category: "analytics" },
   { type: "microsoft.web/hostingenvironments", label: "App Service Environment", category: "web" },
+  // Owner of the App Service VNet integration (subnet delegation Microsoft.Web/serverFarms).
+  { type: "microsoft.web/serverfarms", label: "App Service Plan", category: "web" },
+  {
+    type: "microsoft.servicenetworking/trafficcontrollers",
+    label: "Application Gateway for Containers",
+    category: "edge",
+  },
+  { type: "microsoft.devopsinfrastructure/pools", label: "Managed DevOps Pool", category: "other" },
   { type: "microsoft.logic/workflows", label: "Logic App (Consumption)", category: "integration" },
   { type: "microsoft.signalrservice/webpubsub", label: "Web PubSub", category: "integration" },
   { type: "microsoft.devices/iothubs", label: "IoT Hub", category: "integration" },
@@ -135,6 +143,8 @@ export const PAAS_SERVICE_TYPES: readonly PaasServiceType[] = [
  */
 export const PAAS_AUX_TYPES: readonly string[] = [
   "microsoft.cdn/profiles/afdendpoints",
+  "microsoft.servicenetworking/trafficcontrollers/associations",
+  "microsoft.servicenetworking/trafficcontrollers/frontends",
   "microsoft.desktopvirtualization/applicationgroups",
 ];
 
