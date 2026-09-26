@@ -265,6 +265,8 @@ export function Workspace({
             inbound={inboundPaths}
             direction={pathDirection}
             onDirection={setPathDirection}
+            subscriptions={model.inventory.subscriptions}
+            subscription={subscription}
             onOpen={(id) => {
               setSelectedId(id);
               setPathSource(id);

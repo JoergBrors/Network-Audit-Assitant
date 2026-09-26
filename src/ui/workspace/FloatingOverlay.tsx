@@ -12,10 +12,10 @@ const MIN_WIDTH = 340;
 const MIN_HEIGHT = 320;
 const STORAGE_KEY = "ai-overlay-rect";
 
-function loadRect(): OverlayRect {
+function loadRect(key: string, size: { width: number; height: number }): OverlayRect {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return centered();
+    const raw = localStorage.getItem(key);
+    if (!raw) return centered(size);
     const parsed = JSON.parse(raw) as Partial<OverlayRect>;
     if (
       typeof parsed.x === "number" &&
@@ -28,12 +28,12 @@ function loadRect(): OverlayRect {
   } catch {
     // ignore, fall through to default
   }
-  return centered();
+  return centered(size);
 }
 
-function centered(): OverlayRect {
-  const width = DEFAULT_RECT.width;
-  const height = DEFAULT_RECT.height;
+function centered(size: { width: number; height: number }): OverlayRect {
+  const width = Math.min(size.width, window.innerWidth - 32);
+  const height = Math.min(size.height, window.innerHeight - 32);
   return {
     width,
     height,
@@ -42,9 +42,9 @@ function centered(): OverlayRect {
   };
 }
 
-function saveRect(rect: OverlayRect): void {
+function saveRect(key: string, rect: OverlayRect): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(rect));
+    localStorage.setItem(key, JSON.stringify(rect));
   } catch {
     // best effort: a private window or full storage just means position isn't remembered
   }
@@ -60,14 +60,16 @@ function clampToViewport(rect: OverlayRect): OverlayRect {
   };
 }
 
-type DragState = { kind: "move"; startX: number; startY: number; origX: number; origY: number } | {
-  kind: "resize";
-  edge: "se" | "e" | "s";
-  startX: number;
-  startY: number;
-  origWidth: number;
-  origHeight: number;
-};
+type DragState =
+  | { kind: "move"; startX: number; startY: number; origX: number; origY: number }
+  | {
+      kind: "resize";
+      edge: "se" | "e" | "s";
+      startX: number;
+      startY: number;
+      origWidth: number;
+      origHeight: number;
+    };
 
 /**
  * A floating, draggable, resizable window (title bar drag, corner/edge resize handles), positioned
@@ -80,13 +82,18 @@ export function FloatingOverlay({
   onClose,
   children,
   headerExtra,
+  storageKey = STORAGE_KEY,
+  defaultSize = DEFAULT_RECT,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   headerExtra?: React.ReactNode;
+  /** localStorage key for position/size (one per kind of window). */
+  storageKey?: string;
+  defaultSize?: { width: number; height: number };
 }) {
-  const [rect, setRect] = useState<OverlayRect>(() => clampToViewport(loadRect()));
+  const [rect, setRect] = useState<OverlayRect>(() => clampToViewport(loadRect(storageKey, defaultSize)));
   const dragRef = useRef<DragState | null>(null);
   const rectRef = useRef(rect);
   rectRef.current = rect;
@@ -97,31 +104,31 @@ export function FloatingOverlay({
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const commit = useCallback((next: OverlayRect) => {
-    setRect(next);
-    saveRect(next);
-  }, []);
-
-  const onPointerMove = useCallback(
-    (e: PointerEvent) => {
-      const drag = dragRef.current;
-      if (!drag) return;
-      if (drag.kind === "move") {
-        const dx = e.clientX - drag.startX;
-        const dy = e.clientY - drag.startY;
-        setRect((r) => ({ ...r, x: drag.origX + dx, y: drag.origY + dy }));
-      } else {
-        const dx = e.clientX - drag.startX;
-        const dy = e.clientY - drag.startY;
-        setRect((r) => ({
-          ...r,
-          width: drag.edge !== "s" ? Math.max(MIN_WIDTH, drag.origWidth + dx) : r.width,
-          height: drag.edge !== "e" ? Math.max(MIN_HEIGHT, drag.origHeight + dy) : r.height,
-        }));
-      }
+  const commit = useCallback(
+    (next: OverlayRect) => {
+      setRect(next);
+      saveRect(storageKey, next);
     },
-    [],
+    [storageKey],
   );
+
+  const onPointerMove = useCallback((e: PointerEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    if (drag.kind === "move") {
+      const dx = e.clientX - drag.startX;
+      const dy = e.clientY - drag.startY;
+      setRect((r) => ({ ...r, x: drag.origX + dx, y: drag.origY + dy }));
+    } else {
+      const dx = e.clientX - drag.startX;
+      const dy = e.clientY - drag.startY;
+      setRect((r) => ({
+        ...r,
+        width: drag.edge !== "s" ? Math.max(MIN_WIDTH, drag.origWidth + dx) : r.width,
+        height: drag.edge !== "e" ? Math.max(MIN_HEIGHT, drag.origHeight + dy) : r.height,
+      }));
+    }
+  }, []);
 
   const endDrag = useCallback(() => {
     if (!dragRef.current) return;

@@ -5,6 +5,15 @@ import type { PathComparison, PathDestination, PathHop, PathResult, PathStatus }
 import type { RoutingContext } from "../../routing/context.js";
 import { analyzeInbound, type InboundExposure } from "../../routing/inbound.js";
 import { compareFamilies, EGRESS_LABEL } from "../../routing/trace.js";
+import { crossSubscriptionDependencies, type SubscriptionDependency } from "../../routing/dependencies.js";
+import { subscriptionOf } from "../../utils/ids.js";
+import { FloatingOverlay } from "./FloatingOverlay.js";
+
+/** Subscription of the path source and a name lookup, to mark hops in other subscriptions. */
+interface SubscriptionScope {
+  own: string | undefined;
+  name: (id: string | undefined) => string;
+}
 
 export const STATUS_LABEL: Record<PathStatus, string> = {
   ALLOWED: "Erlaubt",
@@ -53,6 +62,11 @@ export function PathPanel({
   shownKey,
 }: PathPanelProps) {
   const [target, setTarget] = useState("internet");
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const scope = useMemo<SubscriptionScope>(() => {
+    const names = new Map(ctx.inv.subscriptions.map((s) => [s.subscriptionId.toLowerCase(), s.name]));
+    return { own: subscriptionOf(sourceId), name: (id) => (id ? (names.get(id) ?? id) : "–") };
+  }, [ctx, sourceId]);
   const [protocol, setProtocol] = useState<"Tcp" | "Udp" | "*">("Tcp");
   const [port, setPort] = useState(443);
   const [query, setQuery] = useState<{
@@ -100,6 +114,8 @@ export function PathPanel({
             protocol,
             port,
           });
+          // Show the result in its own window, also when the query did not change.
+          setOverlayOpen(true);
         }}
       >
         <label>
@@ -133,35 +149,74 @@ export function PathPanel({
         </button>
       </form>
 
-      {comparison.architectureGap && <div className="gap-banner">{comparison.architectureGap}</div>}
-      {comparison.differences.length > 0 && (
-        <ul className="differences small">
-          {comparison.differences.map((d) => (
-            <li key={d}>{d}</li>
-          ))}
-        </ul>
+      <div className="path-summary">
+        {(["ipv4", "ipv6"] as const).map((family) => {
+          const r = comparison[family];
+          return (
+            <div key={family} className={`path-summary-row status-border-${r.status}`}>
+              <strong>{family === "ipv4" ? "IPv4" : "IPv6"}</strong>{" "}
+              <span className={`path-status path-status-${r.notApplicable ? "NA" : r.status}`}>
+                {r.notApplicable ? "nicht konfiguriert" : STATUS_LABEL[r.status]}
+              </span>
+              <div className="small">{r.summary}</div>
+            </div>
+          );
+        })}
+        <button className="secondary small-button" onClick={() => setOverlayOpen(true)}>
+          Details im Fenster
+        </button>
+      </div>
+
+      {overlayOpen && (
+        <FloatingOverlay
+          title={`Pfadanalyse · ${sourceName} → ${query.destination.kind === "internet" ? "Internet" : query.destination.kind === "ip" ? query.destination.address : "Ziel"} (${query.protocol === "*" ? "beliebig" : query.protocol.toUpperCase()}/${query.port})`}
+          onClose={() => setOverlayOpen(false)}
+          storageKey="path-overlay-rect"
+          defaultSize={{ width: 520, height: 640 }}
+        >
+          <div className="path-overlay-body">
+            {comparison.architectureGap && <div className="gap-banner">{comparison.architectureGap}</div>}
+            {comparison.differences.length > 0 && (
+              <ul className="differences small">
+                {comparison.differences.map((d) => (
+                  <li key={d}>{d}</li>
+                ))}
+              </ul>
+            )}
+            <div className="path-columns">
+              {(["ipv4", "ipv6"] as const).map((family) => (
+                <PathColumn
+                  key={family}
+                  family={family}
+                  result={comparison[family]}
+                  onSelect={onSelect}
+                  shown={shownKey === family}
+                  scope={scope}
+                  dependencies={
+                    comparison[family].notApplicable
+                      ? []
+                      : crossSubscriptionDependencies(sourceId, comparison[family].hops, [
+                          ...comparison[family].securityControls,
+                          comparison[family].egress?.resourceId,
+                        ])
+                  }
+                  onShow={() =>
+                    onShowPath(family, family === "ipv4" ? "IPv4" : "IPv6", pathNodeIds(comparison[family]))
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        </FloatingOverlay>
       )}
 
-      <div className="path-columns">
-        {(["ipv4", "ipv6"] as const).map((family) => (
-          <PathColumn
-            key={family}
-            family={family}
-            result={comparison[family]}
-            onSelect={onSelect}
-            shown={shownKey === family}
-            onShow={() =>
-              onShowPath(family, family === "ipv4" ? "IPv4" : "IPv6", pathNodeIds(comparison[family]))
-            }
-          />
-        ))}
-      </div>
       <InboundSection
         ctx={ctx}
         targetId={sourceId}
         onSelect={onSelect}
         onShowPath={onShowPath}
         shownKey={shownKey}
+        scope={scope}
       />
       <p className="muted small">
         Konfigurationsbasierte Analyse: per BGP gelernte Routen, NVA-Verhalten und FQDN-Regeln sind nicht
@@ -189,12 +244,16 @@ function PathColumn({
   onSelect,
   shown,
   onShow,
+  scope,
+  dependencies,
 }: {
   family: IpFamily;
   result: PathResult;
   onSelect: (id: string) => void;
   shown: boolean;
   onShow: () => void;
+  scope: SubscriptionScope;
+  dependencies: SubscriptionDependency[];
 }) {
   const label = family === "ipv4" ? "IPv4" : "IPv6";
   return (
@@ -221,12 +280,54 @@ function PathColumn({
           {shown ? "wird im Graph gezeigt" : "Im Graph zeigen"}
         </button>
       )}
-      <HopList hops={result.hops} onSelect={onSelect} />
+      <DependencyNote dependencies={dependencies} scope={scope} onSelect={onSelect} />
+      <HopList hops={result.hops} onSelect={onSelect} scope={scope} />
     </section>
   );
 }
 
-export function HopList({ hops, onSelect }: { hops: PathHop[]; onSelect: (id: string) => void }) {
+/** Lists the other subscriptions (and their resources) a path depends on. */
+function DependencyNote({
+  dependencies,
+  scope,
+  onSelect,
+}: {
+  dependencies: SubscriptionDependency[];
+  scope: SubscriptionScope;
+  onSelect: (id: string) => void;
+}) {
+  if (dependencies.length === 0) return null;
+  return (
+    <div className="dependency-note small">
+      <strong>Abhängigkeiten zu anderen Subscriptions:</strong>
+      <ul>
+        {dependencies.map((d) => (
+          <li key={d.subscriptionId}>
+            <span className="badge badge-subscription">↗ {scope.name(d.subscriptionId)}</span>
+            {d.resourceIds.map((id, i) => (
+              <span key={id}>
+                {i > 0 && ", "}
+                <button className="link" onClick={() => onSelect(id)}>
+                  {id.split("/").pop()}
+                </button>
+              </span>
+            ))}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function HopList({
+  hops,
+  onSelect,
+  scope,
+}: {
+  hops: PathHop[];
+  onSelect: (id: string) => void;
+  scope?: SubscriptionScope | undefined;
+}) {
   return (
     <ol className="hops">
       {hops.map((h) => (
@@ -244,6 +345,14 @@ export function HopList({ hops, onSelect }: { hops: PathHop[]; onSelect: (id: st
                 <strong>{h.label}</strong>
               )}{" "}
               <span className={`conf conf-${h.confidence}`}>{h.confidence}</span>
+              {scope && h.nodeId && subscriptionOf(h.nodeId) && subscriptionOf(h.nodeId) !== scope.own && (
+                <span
+                  className="badge badge-subscription"
+                  title="Ressource liegt in einer anderen Subscription"
+                >
+                  ↗ {scope.name(subscriptionOf(h.nodeId))}
+                </span>
+              )}
             </div>
             <div className="small">{h.reason}</div>
             {h.decision && (
@@ -295,12 +404,14 @@ function InboundSection({
   onSelect,
   onShowPath,
   shownKey,
+  scope,
 }: {
   ctx: RoutingContext;
   targetId: string;
   onSelect: (id: string) => void;
   onShowPath: PathPanelProps["onShowPath"];
   shownKey: string | undefined;
+  scope: SubscriptionScope;
 }) {
   const exposures = useMemo(() => analyzeInbound(ctx, { targetId }), [ctx, targetId]);
   return (
@@ -338,7 +449,8 @@ function InboundSection({
             >
               {shownKey === e.id ? "wird im Graph gezeigt" : "Im Graph zeigen"}
             </button>
-            <HopList hops={e.hops} onSelect={onSelect} />
+            <DependencyNote dependencies={e.dependencies} scope={scope} onSelect={onSelect} />
+            <HopList hops={e.hops} onSelect={onSelect} scope={scope} />
           </details>
         ))
       )}

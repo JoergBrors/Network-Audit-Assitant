@@ -909,11 +909,14 @@ details.section > summary {
 
 /* --- Routing / path analysis --------------------------------------------------------------- */
 .path-form {
-  display: grid;
-  grid-template-columns: 1fr auto auto auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
-  align-items: end;
+  align-items: flex-end;
   margin-bottom: var(--space-2);
+}
+.path-form label:first-child {
+  flex: 1 1 160px;
 }
 
 .path-form label {
@@ -1563,4 +1566,52 @@ details.panel[open] > summary::before {
 .dns-checks li {
   padding: 4px 0;
   border-bottom: 1px solid var(--border);
+}
+.badge-subscription {
+  display: inline-block;
+  margin: 0 4px 2px 0;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--surface));
+}
+.path-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+.path-summary-row {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+}
+.path-summary > button {
+  align-self: flex-start;
+}
+.path-overlay-body {
+  overflow-y: auto;
+  height: 100%;
+  padding-right: 4px;
+}
+.dependency-note {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+.dependency-note ul {
+  margin: 4px 0 0;
+  padding-left: 0;
+  list-style: none;
+}
+.default-paths table.grid th {
+  white-space: nowrap;
+}
+.default-paths table.grid {
+  min-width: 1150px;
 }
