@@ -127,6 +127,16 @@ describe("inbound Internet → workload paths", () => {
     );
   });
 
+  it("shows the allowing NSG as a hop so it can be highlighted in the graph", () => {
+    const [e] = analyzeInbound(ctxFor());
+    const nsgHop = e!.hops.find((h) => h.nodeId === lc(F.NSG_SPOKE));
+    expect(nsgHop).toMatchObject({
+      label: "nsg-spoke",
+      decision: { control: "nsg", direction: "Inbound", access: "Allow", rule: "allow-https-v6" },
+    });
+    expect(nsgHop!.reason).toContain("NSG (Subnet) erlaubt eingehend");
+  });
+
   it("blocks load balancer traffic the NSG does not allow and lists restricted ports", () => {
     const raw = F.hubSpokeRaw();
     withLoadBalancer(raw);
