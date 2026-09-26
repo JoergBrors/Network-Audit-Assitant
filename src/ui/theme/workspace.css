@@ -1493,3 +1493,74 @@ tr.clickable:hover td {
   height: 14px;
   cursor: nwse-resize;
 }
+
+/* PaaS / DNS assessment */
+.exposure {
+  display: inline-block;
+  padding: 1px 6px;
+  margin-right: 4px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.exposure-public {
+  background: #fde2e1;
+  color: #9f1c16;
+}
+.exposure-restricted {
+  background: #fdf0d5;
+  color: #8a5a00;
+}
+.exposure-private {
+  background: #dcf5e3;
+  color: #1c6b36;
+}
+.exposure-unknown {
+  background: var(--surface-2);
+  color: var(--text-muted, #666);
+}
+.assessment-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.assessment-tiles .tile {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: var(--space-2);
+  background: var(--surface);
+}
+.assessment-tiles .tile-value {
+  font-size: 22px;
+  font-weight: 700;
+}
+.assessment-tiles .severity-badge {
+  margin-right: 4px;
+}
+.assessment-filter input {
+  flex: 1;
+}
+details.panel > summary {
+  cursor: pointer;
+  list-style: none;
+}
+details.panel > summary h2 {
+  display: inline;
+}
+details.panel > summary::before {
+  content: "▸ ";
+}
+details.panel[open] > summary::before {
+  content: "▾ ";
+}
+.dns-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.dns-checks li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}

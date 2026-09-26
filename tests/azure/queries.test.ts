@@ -33,4 +33,17 @@ describe("query catalog", () => {
   it("contains only read-only KQL operators", () => {
     for (const q of DISCOVERY_QUERIES) expect(q.kql).not.toMatch(/\b(update|delete|set|insert)\b/i);
   });
+
+  it("queries PaaS services with network endpoints", () => {
+    const paas = DISCOVERY_QUERIES.find((q) => q.id === "Q-PAAS")!;
+    expect(paas.table).toBe("resources");
+    for (const t of [
+      "microsoft.storage/storageaccounts",
+      "microsoft.sql/servers",
+      "microsoft.keyvault/vaults",
+      "microsoft.web/sites",
+    ])
+      expect(paas.types).toContain(t);
+    for (const t of paas.types) expect(t).toBe(t.toLowerCase());
+  });
 });

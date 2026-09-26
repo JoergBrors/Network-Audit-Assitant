@@ -1,3 +1,4 @@
+import { assessServices } from "../assessment/index.js";
 import { z } from "zod";
 import { DiscoveryQualitySchema, DiscoveryWarningSchema } from "../models/discovery.js";
 import { buildGraph } from "../graph/buildGraph.js";
@@ -48,6 +49,7 @@ export function buildAssessmentExport(
   const defaultPaths = analyzeDefaultPaths(inv, routing);
   const bypasses = findIpv6Bypasses(inv, routing);
   const inbound = analyzeInbound(routing);
+  const services = assessServices(inv);
   const reachable = inbound.filter((e) => e.status !== "BLOCKED");
   const compactPath = (p: (typeof defaultPaths)[number]) => ({
     subnetId: p.subnetId,
@@ -113,6 +115,8 @@ export function buildAssessmentExport(
       nsgs: inv.nsgs.length,
       routeTables: inv.routeTables.length,
       privateEndpoints: inv.privateEndpoints.length,
+      paasServices: inv.paasServices.length,
+      privateDnsZones: inv.privateDnsZones.length,
       publicIps: inv.publicIps.length,
       graphNodes: model.graph.nodes.length,
       graphEdges: model.graph.edges.length,
@@ -161,6 +165,17 @@ export function buildAssessmentExport(
         confidence: e.confidence,
         summary: e.summary,
       })),
+      /** Rule-based PaaS and DNS assessment (src/assessment); findings sorted by severity. */
+      serviceAssessment: {
+        paasExposure: services.paas,
+        dns: {
+          vnets: services.dns.vnets,
+          privateEndpointResolution: services.dns.privateEndpoints,
+          resolvers: services.dns.resolvers,
+          rulesets: services.dns.rulesets,
+        },
+        findings: services.findings,
+      },
       knownArchitectureGaps: [
         ...bypasses.map((b) => ({ type: "IPV6_FIREWALL_BYPASS", ...b })),
         ...reachable
@@ -259,6 +274,7 @@ function inventorySections(inv: NormalizedInventory) {
     privateEndpoints: inv.privateEndpoints,
     privateDnsZones: inv.privateDnsZones,
     dnsResolvers: inv.dnsResolvers,
+    paasServices: inv.paasServices,
     otherNetworkResources: inv.otherNetworkResources,
     unclassifiedNetworkResources: inv.unclassifiedNetworkResources,
     virtualHubs: inv.virtualHubs,
@@ -277,7 +293,10 @@ const ImportSchema = z.looseObject({
   ...Object.fromEntries(
     Object.keys(inventorySections(emptyInventory()))
       .filter((k) => k !== "avnm")
-      .map((k) => [k, k === "virtualHubs" || k === "serviceTags" ? section.optional() : section]),
+      .map((k) => [
+        k,
+        k === "virtualHubs" || k === "serviceTags" || k === "paasServices" ? section.optional() : section,
+      ]),
   ),
   avnm: z.looseObject({}).optional(),
 });
@@ -345,6 +364,7 @@ function emptyInventory(): NormalizedInventory {
     privateEndpoints: [],
     privateDnsZones: [],
     dnsResolvers: [],
+    paasServices: [],
     virtualMachines: [],
     scaleSets: [],
     otherNetworkResources: [],

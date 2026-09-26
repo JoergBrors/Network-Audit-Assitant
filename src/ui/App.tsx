@@ -15,6 +15,7 @@ import { Workspace, type WorkspaceComparison } from "./workspace/Workspace.js";
 import { diffModels } from "../drift/diff.js";
 import { downloadJson } from "./workspace/download.js";
 import { AiAnalysisPanel } from "./workspace/AiAnalysisPanel.js";
+import { ServiceAssessmentView } from "./components/ServiceAssessmentView.js";
 import { readAzureOpenAiConfigFromEnv } from "../ai/azureOpenAi.js";
 
 interface AppProps {
@@ -272,6 +273,7 @@ export function App({ session, startupError }: AppProps) {
       {model && tab === "overview" && (
         <main className="app-main">
           <p className="muted small">Quelle: {source}</p>
+          <ServiceAssessmentView inventory={model.inventory} />
           <DiscoverySummary
             discovery={model.discovery}
             subscriptions={model.inventory.subscriptions}

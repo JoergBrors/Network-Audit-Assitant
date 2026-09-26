@@ -19,6 +19,7 @@ import type { EntityRef } from "./entityIndex.js";
 import { downloadJson } from "./download.js";
 import type { ComparisonGraph } from "../../drift/diff.js";
 import { ChangeDetails } from "./Changes.js";
+import { ServiceDetails } from "./ServiceDetails.js";
 import type { RoutingContext } from "../../routing/context.js";
 import { synthesizeRoutes } from "../../routing/routes.js";
 import { parseCidr } from "../../addressing/ip.js";
@@ -185,6 +186,8 @@ export function DetailPanel({
       )}
 
       <TypeSpecific model={model} node={node} entity={entity} Link={Link} />
+
+      <ServiceDetails model={model} node={node} entity={entity} Link={Link} />
 
       {routing && node.type === "subnet" && (
         <EffectiveRoutes routing={routing} subnetId={node.id} Link={Link} />

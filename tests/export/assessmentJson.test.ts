@@ -115,4 +115,26 @@ describe("assessment JSON export", () => {
     expect(json).not.toContain("provisioningState");
     expect(json).not.toContain("resourceGuid");
   });
+
+  it("exports PaaS services and the service assessment and reads them back", () => {
+    const raw = F.hubSpokeRaw();
+    raw.resources["Q-PAAS"] = [F.res(F.SQL, "microsoft.sql/servers", { publicNetworkAccess: "Disabled" })];
+    const exported = buildAssessmentExport(analyzeInventory(raw), { now: new Date(2026, 8, 26) });
+    expect(exported.paasServices).toHaveLength(1);
+    expect(exported.summary.paasServices).toBe(1);
+    expect(exported.assessmentContext.serviceAssessment.dns.privateEndpointResolution).toEqual([
+      expect.objectContaining({ groupId: "sqlServer", status: "missing-zone" }),
+    ]);
+    expect(exported.assessmentContext.serviceAssessment.findings.map((f) => f.code)).toContain(
+      "PAAS_UNREACHABLE_PRIVATE_DNS",
+    );
+    const back = parseAssessmentExport(JSON.stringify(exported));
+    expect(back.inventory.paasServices[0]).toMatchObject({ name: "sql1", exposure: "private" });
+    expect(back.graph.nodes.find((n) => n.name === "sql1")!.type).toBe("paasService");
+  });
+
+  it("imports older exports without a paasServices section", () => {
+    const { paasServices: _omit, ...older } = doc;
+    expect(parseAssessmentExport(JSON.stringify(older)).inventory.paasServices).toEqual([]);
+  });
 });

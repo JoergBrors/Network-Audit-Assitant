@@ -80,4 +80,44 @@ describe("ARM enrichment (phase 5)", () => {
     expect(enrichment.results.find((r) => r.operation === "RoutingIntent.list")!.status).toBe("forbidden");
     expect(enrichment.serviceTags?.tags).toEqual([]);
   });
+
+  it("reads PaaS network rules via GET for SQL and App Service, skipping private-only services", async () => {
+    const raw = F.hubSpokeRaw();
+    const sql = F.SQL;
+    const web = F.net(F.SUB_APP, "rg-app", "sites", "app1").replace("Microsoft.Network", "Microsoft.Web");
+    const privateSql = sql.replace("sql1", "sql-private");
+    raw.resources["Q-PAAS"] = [
+      F.res(sql, "microsoft.sql/servers", { publicNetworkAccess: "Enabled" }),
+      F.res(privateSql, "microsoft.sql/servers", { publicNetworkAccess: "Disabled" }),
+      F.res(web, "microsoft.web/sites", {}),
+    ];
+    const calls: { path: string; api: string }[] = [];
+    const reader: ArmReader = {
+      list: (path, api) => {
+        calls.push({ path, api });
+        if (path.endsWith("/firewallRules"))
+          return Promise.resolve([{ properties: { startIpAddress: "0.0.0.0", endIpAddress: "0.0.0.0" } }]);
+        if (path.endsWith("/virtualNetworkRules"))
+          return Promise.reject(restError(403, "AuthorizationFailed"));
+        if (path.endsWith("/config")) return Promise.resolve([{ name: "web", properties: {} }]);
+        return Promise.resolve([]);
+      },
+    };
+    const { enrichment } = await runEnrichment({
+      raw,
+      credential,
+      logger: memoryLogger().logger,
+      readerFactory: () => reader,
+    });
+    const rules = enrichment.paasNetworkRules!;
+    expect(Object.keys(rules).sort()).toEqual([sql.toLowerCase(), web.toLowerCase()].sort());
+    expect(rules[sql.toLowerCase()]).toMatchObject({ status: "partial", firewallRules: [expect.anything()] });
+    expect(rules[web.toLowerCase()]).toMatchObject({
+      status: "ok",
+      siteConfig: [{ name: "web", properties: {} }],
+    });
+    expect(calls.find((c) => c.path === `${sql}/firewallRules`)!.api).toBe("2021-11-01");
+    expect(calls.find((c) => c.path === `${web}/config`)!.api).toBe("2023-12-01");
+    expect(calls.some((c) => c.path.startsWith(privateSql))).toBe(false);
+  });
 });

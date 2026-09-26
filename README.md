@@ -37,6 +37,7 @@ npm run dev                  # http://localhost:5173
 | Pfadanalyse | Subnet/VM/NIC wählen → „Pfadanalyse IPv4/IPv6“: Weg ins Internet oder zu einer IP je Familie, Hop für Hop mit Route, NSG-/Firewall-Entscheidung, Egress, Konfidenz und Evidence; „Im Graph zeigen“ hebt den Pfad hervor. Darunter „Eingehend aus dem Internet“: welche Public IPs, Load Balancer, Application Gateways oder Firewall-DNAT-Regeln die Ressource erreichen |
 | Internet-Pfade | Umschalter über dem Graphen: „Ausgehend“: Tabelle aller Subnets mit Status (erlaubt, blockiert, unklar, potenzieller Bypass), erster Route, Egress und Kontrolle. „Eingehend“: alle Eingangspfade aus dem Internet mit offenen bzw. eingeschränkten Ports, Kontrolle (Firewall/WAF) und asymmetrischem Rückweg |
 | Effektive Routen | Detailbereich eines Subnets: rekonstruierte Routen je Familie mit Quelle und Konfidenz |
+| Übersicht & Qualität | Bewertung von PaaS-Endpunkten und DNS: Befunde nach Schwere, Erreichbarkeit jedes PaaS-Dienstes (Storage, SQL, Key Vault, App Service, AKS, …), DNS-Server je VNet, Private-DNS-Zonen, DNS Private Resolver und Regelsätze, DNS-Prüfung jedes Private Endpoints; dazu Discovery-Qualität |
 | JSON exportieren | `azure-network-assessment-YYYYMMDD-HHMM.json` (normalisiertes Inventar + Beziehungsgraph) |
 | JSON importieren | früheren Export offline laden (ohne Anmeldung) |
 | Mit JSON vergleichen | früheren Export als Basis: NEU / GEÄNDERT / ENTFERNT im Graphen, Δ-Zähler, „Nur Änderungen“, Diff-Export |
