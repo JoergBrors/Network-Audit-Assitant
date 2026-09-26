@@ -24,6 +24,28 @@ describe("computeVisibleGraph", () => {
     });
   });
 
+  it("hides filtered element types but keeps the hierarchy", () => {
+    const v = view({ level: 4, hiddenTypes: new Set(["subnet", "nic", "nsg", "routeTable"]) });
+    expect(ids(v)).not.toContain(lc(F.SNET_APP));
+    expect(ids(v)).toContain(lc(F.SPOKE));
+    // The VM moves up from its (hidden) subnet into the VNet.
+    expect(v.nodes.find((n) => n.node.id === lc(F.VM))).toMatchObject({ containerId: lc(F.SPOKE) });
+  });
+
+  it("ignores the type filter in focus mode", () => {
+    const v = view({ level: 4, focusId: lc(F.SPOKE), hiddenTypes: new Set(["subnet"]) });
+    expect(ids(v)).toContain(lc(F.SNET_APP));
+  });
+
+  it("shows tagged resources regardless of level, with related context", () => {
+    const v = view({ level: 2, tagIds: new Set([lc(F.VM)]) });
+    expect(ids(v)).toEqual(expect.arrayContaining([lc(F.VM), lc(F.SNET_APP), lc(F.SPOKE)]));
+    expect(v.matchCount).toBe(1);
+    expect(v.nodes.find((n) => n.node.id === lc(F.VM))?.emphasis).toBe("match");
+    expect(v.nodes.find((n) => n.node.id === lc(F.SPOKE))?.emphasis).toBe("context");
+    expect(ids(v)).not.toContain(lc(F.LONELY));
+  });
+
   it("drills down into an expanded VNet regardless of level", () => {
     const v = view({ level: 2, expanded: new Set([lc(F.SPOKE)]) });
     expect(ids(v)).toContain(lc(F.SNET_APP));

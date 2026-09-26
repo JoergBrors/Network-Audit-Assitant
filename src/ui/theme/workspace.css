@@ -1628,3 +1628,70 @@ details.panel[open] > summary::before {
 .default-paths table.grid {
   min-width: 1150px;
 }
+
+/* --- Element-type filter ------------------------------------------------------------------- */
+.type-filter {
+  position: relative;
+}
+
+.type-filter > summary {
+  cursor: pointer;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface);
+  white-space: nowrap;
+}
+
+.type-filter > summary::-webkit-details-marker {
+  display: none;
+}
+
+.type-filter > summary::after {
+  content: " ▾";
+}
+
+.type-filter-panel {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 460px;
+  max-height: 60vh;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 15%);
+}
+
+.type-filter-panel ul {
+  list-style: none;
+  margin: var(--space-2) 0;
+  padding: 0;
+  columns: 2;
+}
+
+.type-filter-panel li {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.type-filter-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.tag-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.tag-filter input {
+  width: 180px;
+}

@@ -1,16 +1,22 @@
 import { useMemo, useState } from "react";
 import { cidrContains, ipFamilyOf } from "../../addressing/ip.js";
 import type { GraphIndex } from "../../graph/view.js";
+import { matchTag, parseTagQuery, type TagIndex } from "../../graph/tags.js";
 import type { GraphNode } from "../../models/graph.js";
 import { NODE_TYPE_LABELS } from "../../models/graph.js";
 import { abbreviationOf, categoryOf } from "../graph/nodeStyle.js";
 
 const MAX_RESULTS = 40;
 
-/** Global search over name, resource ID, subscription, resource group and IP address / CIDR. */
-export function searchNodes(index: GraphIndex, query: string): { node: GraphNode; reason: string }[] {
+/** Global search over name, resource ID, subscription, resource group, IP address / CIDR and tags. */
+export function searchNodes(
+  index: GraphIndex,
+  query: string,
+  tags?: TagIndex,
+): { node: GraphNode; reason: string }[] {
   const q = query.trim().toLowerCase();
   if (q.length < 2) return [];
+  const tagQuery = tags ? parseTagQuery(q) : undefined;
   const isIp = ipFamilyOf(q) !== undefined;
   const results: { node: GraphNode; reason: string; score: number }[] = [];
   for (const node of index.byId.values()) {
@@ -36,6 +42,11 @@ export function searchNodes(index: GraphIndex, query: string): { node: GraphNode
       results.push({ node, reason: "Resource Group", score: 30 });
     else if (addresses.some((a) => a.toLowerCase().includes(q)))
       results.push({ node, reason: "Adresse", score: 40 });
+    else {
+      const nodeTags = tagQuery && tags?.get(node.id);
+      const tag = nodeTags ? matchTag(nodeTags, tagQuery) : undefined;
+      if (tag) results.push({ node, reason: `Tag ${tag}`, score: 45 });
+    }
   }
   return results
     .sort((a, b) => a.score - b.score || a.node.name.localeCompare(b.node.name))
@@ -43,16 +54,24 @@ export function searchNodes(index: GraphIndex, query: string): { node: GraphNode
     .map(({ node, reason }) => ({ node, reason }));
 }
 
-export function SearchBox({ index, onSelect }: { index: GraphIndex; onSelect: (id: string) => void }) {
+export function SearchBox({
+  index,
+  tags,
+  onSelect,
+}: {
+  index: GraphIndex;
+  tags?: TagIndex | undefined;
+  onSelect: (id: string) => void;
+}) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  const results = useMemo(() => searchNodes(index, query), [index, query]);
+  const results = useMemo(() => searchNodes(index, query, tags), [index, query, tags]);
 
   return (
     <div className="search">
       <input
         type="search"
-        placeholder="Suche: Name, Resource ID, IP (10.1.2.3, 2a02::1) oder CIDR"
+        placeholder="Suche: Name, Resource ID, IP (10.1.2.3, 2a02::1), CIDR oder Tag"
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);

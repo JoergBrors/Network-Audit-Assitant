@@ -1,4 +1,4 @@
-import type { EdgeType, GraphEdge, GraphNode, NetworkGraph } from "../models/graph.js";
+import type { EdgeType, GraphEdge, GraphNode, NetworkGraph, NodeType } from "../models/graph.js";
 
 /** UI modes for IP families (ARCHITECTURE.md § 18). */
 export type IpViewMode = "all" | "ipv4" | "ipv6" | "dual";
@@ -21,7 +21,26 @@ export interface ViewState {
    * everything else is hidden. Overrides the IP and change filters.
    */
   pathIds?: ReadonlySet<string> | undefined;
+  /**
+   * Element types left out of the overview (their children still show, grouped under the nearest
+   * visible ancestor). Not applied to the focus subtree, path mode or children of expanded nodes.
+   */
+  hiddenTypes?: ReadonlySet<NodeType> | undefined;
+  /**
+   * Tag filter: nodes whose tags match. They are shown regardless of level of detail and type filter,
+   * with their containers and directly related components as context.
+   */
+  tagIds?: ReadonlySet<string> | undefined;
 }
+
+/** Hierarchy levels that are always shown, so the view stays hierarchical under a type filter. */
+export const STRUCTURAL_TYPES: ReadonlySet<NodeType> = new Set([
+  "tenant",
+  "subscription",
+  "region",
+  "vnet",
+  "internet",
+]);
 
 export interface VisibleNode {
   node: GraphNode;
@@ -206,21 +225,24 @@ function computeAtLevel(index: GraphIndex, state: ViewState, cap: boolean): Visi
   const visible = new Set<string>();
   const neighbors = new Set<string>();
 
+  const focus = state.focusId ? index.byId.get(state.focusId) : undefined;
+  const hiddenTypes = focus || state.pathIds ? undefined : state.hiddenTypes;
   const include = (node: GraphNode, depthOk: (n: GraphNode) => boolean): void => {
-    const stack = [node];
+    const stack: [GraphNode, boolean][] = [[node, false]];
     while (stack.length > 0) {
-      const current = stack.pop()!;
+      const [current, forced] = stack.pop()!;
       if (!inSubscriptionFilter(current, state.subscriptionIds)) continue;
-      visible.add(current.id);
+      // Hidden types are skipped, but their children are still traversed (and grouped one level up).
+      if (forced || !hiddenTypes?.has(current.type) || STRUCTURAL_TYPES.has(current.type))
+        visible.add(current.id);
       const expanded = state.expanded.has(current.id);
       for (const child of index.children.get(current.id) ?? []) {
-        if (expanded || depthOk(child)) stack.push(child);
+        if (expanded || depthOk(child)) stack.push([child, expanded]);
       }
     }
   };
   const byLevel = (n: GraphNode) => n.lod <= state.level;
 
-  const focus = state.focusId ? index.byId.get(state.focusId) : undefined;
   if (focus) {
     include(focus, byLevel);
     // Directly related nodes outside the focused subtree, lifted to the current level of detail.
@@ -287,6 +309,27 @@ function computeAtLevel(index: GraphIndex, state: ViewState, cap: boolean): Visi
     }
   }
 
+  // Tag filter: tagged nodes (and their ancestors) are shown regardless of level of detail.
+  const tagFilter = !state.pathIds && state.tagIds !== undefined;
+  if (tagFilter) {
+    // In focus mode only tagged nodes inside the focused subtree are added.
+    const subtreeOk = (id: string) => {
+      if (!focus) return true;
+      for (let c: string | undefined = id; c; c = index.byId.get(c)?.parentId)
+        if (c === focus.id) return true;
+      return visible.has(id);
+    };
+    for (const id of state.tagIds!) {
+      const node = index.byId.get(id);
+      if (!node || !inSubscriptionFilter(node, state.subscriptionIds) || !subtreeOk(id)) continue;
+      let current: string | undefined = id;
+      while (current) {
+        visible.add(current);
+        current = index.byId.get(current)?.parentId;
+      }
+    }
+  }
+
   // Relationship edges are lifted to the nearest visible ancestors.
   const nearestVisible = (id: string): string | undefined => {
     let current: string | undefined = id;
@@ -316,7 +359,7 @@ function computeAtLevel(index: GraphIndex, state: ViewState, cap: boolean): Visi
   const matches = new Set<string>();
   const pathFilter = state.pathIds !== undefined;
   const changeFilter = !pathFilter && state.onlyChanges === true && state.changedIds !== undefined;
-  const filterActive = pathFilter || state.ipMode !== "all" || changeFilter;
+  const filterActive = pathFilter || state.ipMode !== "all" || changeFilter || tagFilter;
   if (pathFilter) {
     for (const id of state.pathIds!) if (visible.has(id)) matches.add(id);
     const keep = new Set([...matches, ...pathContext]);
@@ -340,6 +383,7 @@ function computeAtLevel(index: GraphIndex, state: ViewState, cap: boolean): Visi
     for (const id of visible) {
       if (!nodeMatchesMode(index.byId.get(id)!, state.ipMode)) continue;
       if (changeFilter && !changedVisible.has(id)) continue;
+      if (tagFilter && !state.tagIds!.has(id)) continue;
       matches.add(id);
     }
     const keep = new Set(matches);
@@ -351,9 +395,10 @@ function computeAtLevel(index: GraphIndex, state: ViewState, cap: boolean): Visi
       if (matches.has(ends[1])) keep.add(ends[0]);
     }
     for (const id of [...keep]) {
+      // Ancestors of hidden types are not visible; the walk continues past them.
       let parent = index.byId.get(id)?.parentId;
-      while (parent && visible.has(parent) && !keep.has(parent)) {
-        keep.add(parent);
+      while (parent && !keep.has(parent)) {
+        if (visible.has(parent)) keep.add(parent);
         parent = index.byId.get(parent)?.parentId;
       }
     }
@@ -380,16 +425,21 @@ function computeAtLevel(index: GraphIndex, state: ViewState, cap: boolean): Visi
   }
 
   // Containers: visible nodes with at least one visible child.
+  // The nearest visible ancestor is the container (a hidden-type parent is skipped).
+  const visibleParent = (id: string): string | undefined => {
+    const parent = index.byId.get(id)?.parentId;
+    return parent ? nearestVisible(parent) : undefined;
+  };
   const containerIds = new Set<string>();
   for (const id of visible) {
-    const parent = index.byId.get(id)?.parentId;
-    if (parent && visible.has(parent) && !neighbors.has(id)) containerIds.add(parent);
+    const parent = visibleParent(id);
+    if (parent && !neighbors.has(id)) containerIds.add(parent);
   }
 
   const nodes: VisibleNode[] = [...visible].map((id) => {
     const node = index.byId.get(id)!;
     const children = index.children.get(id) ?? [];
-    const parent = node.parentId;
+    const parent = visibleParent(id);
     return {
       node,
       containerId: parent && containerIds.has(parent) && !neighbors.has(id) ? parent : undefined,
