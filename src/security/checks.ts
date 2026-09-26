@@ -112,6 +112,22 @@ export function checkSecurity(
       };
       return result;
     }
+    // Allowing NSGs are part of the path too (hop list, graph highlighting).
+    result.hops.push({
+      type: "subnet",
+      nodeId: nsgId,
+      label: nameOf(nsgId),
+      reason: `NSG (${scope}) erlaubt ${direction === "Inbound" ? "eingehend" : "ausgehend"}: ${d.rule}`,
+      decision: { control: "nsg", resourceId: nsgId, direction, access: d.access, rule: d.rule },
+      confidence: d.confidence,
+      evidence: [
+        {
+          kind: "rule",
+          resourceId: nsgId,
+          description: `Regel ${d.rule} (Priorität ${d.priority})${d.note ? ` – ${d.note}` : ""}`,
+        },
+      ],
+    });
   }
   return result;
 }
