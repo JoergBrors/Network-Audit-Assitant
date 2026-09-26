@@ -12,7 +12,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { EDGE_TYPE_LABELS } from "../../models/graph.js";
-import type { IpViewMode, VisibleGraph } from "../../graph/view.js";
+import type { IpViewMode, VisibleEdge, VisibleGraph } from "../../graph/view.js";
 import type { ComparisonGraph } from "../../drift/diff.js";
 import { LayoutClient } from "./layoutClient.js";
 import type { Positioned } from "./elkGraph.js";
@@ -68,6 +68,11 @@ function TopologyCanvas({
   const layoutKey = useMemo(() => LayoutClient.key(view), [view]);
   const flow = useReactFlow();
   const lastFitKey = useRef<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | undefined>();
+  const selectedEdge = useMemo(
+    () => (selectedEdgeId ? view.edges.find((e) => e.id === selectedEdgeId) : undefined),
+    [selectedEdgeId, view],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -107,17 +112,24 @@ function TopologyCanvas({
         },
         selected: v.node.id === selectedId,
         style: { width: p.width, height: p.height },
-        className: `rf-${categoryOf(v.node.type)}`,
+        className: `rf-${categoryOf(v.node.type)}${
+          selectedEdge && (selectedEdge.source === v.node.id || selectedEdge.target === v.node.id)
+            ? " rf-edge-end"
+            : ""
+        }`,
       } satisfies Node<TopologyNodeData>;
     });
-  }, [ready, positions, view, expanded, selectedId, changes]);
+  }, [ready, positions, view, expanded, selectedId, changes, selectedEdge]);
 
   const edges = useMemo<Edge[]>(() => {
     if (!ready) return [];
     const result: Edge[] = view.edges.map((e) => {
       const family =
         e.families.length === 1 ? ` fam-${e.families[0]}` : e.families.length > 1 ? " fam-both" : "";
-      const baseLabel = showEdgeLabels ? (e.label ?? EDGE_TYPE_LABELS[e.type]) : undefined;
+      const isSelected = e.id === selectedEdge?.id;
+      // Relationships of the selected resource are emphasised as well.
+      const touchesNode = !isSelected && !!selectedId && (e.source === selectedId || e.target === selectedId);
+      const baseLabel = showEdgeLabels || isSelected ? (e.label ?? EDGE_TYPE_LABELS[e.type]) : undefined;
       const label = e.count > 1 ? `${baseLabel ? `${baseLabel} ` : ""}×${e.count}` : baseLabel;
       const edgeChange = changes
         ? e.edgeIds.map((id) => changes.edgeChanges.get(id)?.kind).find(Boolean)
@@ -126,10 +138,12 @@ function TopologyCanvas({
         id: e.id,
         source: e.source,
         target: e.target,
-        className: `${EDGE_CLASS[e.type]}${family}${e.context ? " edge-context" : ""}${edgeChange ? ` edge-${edgeChange}` : ""}`,
+        className: `${EDGE_CLASS[e.type]}${family}${e.context ? " edge-context" : ""}${edgeChange ? ` edge-${edgeChange}` : ""}${isSelected ? " edge-selected" : touchesNode ? " edge-highlight" : ""}`,
         ...(label ? { label } : {}),
         ...(DIRECTED.has(e.type) ? { markerEnd: { type: MarkerType.ArrowClosed } } : {}),
         focusable: false,
+        interactionWidth: 16,
+        ...(isSelected ? { zIndex: 1001 } : touchesNode ? { zIndex: 900 } : {}),
       } satisfies Edge;
     });
     if (pathEdges && pathEdges.length > 1) {
@@ -150,7 +164,7 @@ function TopologyCanvas({
       }
     }
     return result;
-  }, [ready, view, showEdgeLabels, changes, pathEdges]);
+  }, [ready, view, showEdgeLabels, changes, pathEdges, selectedEdge, selectedId]);
 
   // Fit the whole view when the structure changes; center on a revealed node otherwise.
   useEffect(() => {
@@ -214,9 +228,16 @@ function TopologyCanvas({
         nodes={nodes}
         edges={edges}
         nodeTypes={NODE_COMPONENTS}
-        onNodeClick={(_, node) => onSelect(node.id)}
+        onNodeClick={(_, node) => {
+          setSelectedEdgeId(undefined);
+          onSelect(node.id);
+        }}
         onNodeDoubleClick={(_, node) => onToggleExpand(node.id)}
-        onPaneClick={() => onSelect(undefined)}
+        onEdgeClick={(_, edge) => setSelectedEdgeId((cur) => (cur === edge.id ? undefined : edge.id))}
+        onPaneClick={() => {
+          setSelectedEdgeId(undefined);
+          onSelect(undefined);
+        }}
         nodesConnectable={false}
         edgesFocusable={false}
         onlyRenderVisibleElements
@@ -233,6 +254,45 @@ function TopologyCanvas({
         />
         <Controls showInteractive={false} />
       </ReactFlow>
+      {selectedEdge && (
+        <EdgeInfo
+          edge={selectedEdge}
+          name={(id) => view.nodes.find((n) => n.node.id === id)?.node.name ?? id}
+          onSelectNode={(id) => onSelect(id)}
+          onClose={() => setSelectedEdgeId(undefined)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Info bar for the clicked relationship: type, endpoints (clickable) and aggregation count. */
+function EdgeInfo({
+  edge,
+  name,
+  onSelectNode,
+  onClose,
+}: {
+  edge: VisibleEdge;
+  name: (id: string) => string;
+  onSelectNode: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="edge-info small" role="status">
+      <strong>{EDGE_TYPE_LABELS[edge.type]}</strong>
+      {edge.label && edge.label !== EDGE_TYPE_LABELS[edge.type] && <span> · {edge.label}</span>}:{" "}
+      <button className="link" onClick={() => onSelectNode(edge.source)}>
+        {name(edge.source)}
+      </button>{" "}
+      {DIRECTED.has(edge.type) ? "→" : "↔"}{" "}
+      <button className="link" onClick={() => onSelectNode(edge.target)}>
+        {name(edge.target)}
+      </button>
+      {edge.count > 1 && <span className="muted"> · {edge.count} zusammengefasste Beziehungen</span>}
+      <button className="link edge-info-close" onClick={onClose} aria-label="Auswahl aufheben">
+        ✕
+      </button>
     </div>
   );
 }

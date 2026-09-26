@@ -1695,3 +1695,65 @@ details.panel[open] > summary::before {
 .tag-filter input {
   width: 180px;
 }
+
+/* --- Selected / highlighted relationships -------------------------------------------------- */
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke-width: 3;
+}
+
+.react-flow__edge.edge-highlight {
+  opacity: 1;
+}
+
+.react-flow__edge.edge-highlight .react-flow__edge-path {
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 2px var(--selection));
+}
+
+.react-flow__edge.edge-selected {
+  opacity: 1;
+}
+
+.react-flow__edge.edge-selected .react-flow__edge-path {
+  stroke: var(--selection);
+  stroke-width: 4;
+  filter: drop-shadow(0 0 3px var(--selection)) drop-shadow(0 0 8px var(--selection));
+  animation: edge-glow 1.6s ease-in-out infinite;
+}
+
+@keyframes edge-glow {
+  50% {
+    filter: drop-shadow(0 0 1px var(--selection)) drop-shadow(0 0 4px var(--selection));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__edge.edge-selected .react-flow__edge-path {
+    animation: none;
+  }
+}
+
+.react-flow__node.rf-edge-end {
+  box-shadow:
+    0 0 0 2px var(--selection),
+    0 0 12px color-mix(in srgb, var(--selection) 60%, transparent);
+  border-radius: var(--radius);
+}
+
+.edge-info {
+  position: absolute;
+  z-index: 10;
+  bottom: var(--space-2);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 2 * var(--space-3));
+  background: var(--surface);
+  border: 1px solid var(--selection);
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-3);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 15%);
+}
+
+.edge-info-close {
+  margin-left: var(--space-2);
+}
