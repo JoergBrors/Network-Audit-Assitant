@@ -1,10 +1,27 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import type { SubscriptionDependency } from "../../routing/dependencies.js";
 import type { DefaultPathSummary } from "../../routing/analysis.js";
 import type { InboundExposure } from "../../routing/inbound.js";
 import { EGRESS_LABEL } from "../../routing/trace.js";
 import { ENTRY_LABEL, STATUS_LABEL } from "./PathPanel.js";
 
 type Filter = "all" | "bypass" | "uncontrolled" | "ipv6";
+
+type SubscriptionName = (id: string | undefined) => string;
+
+/** Other subscriptions a path depends on, with the resources as tooltip. */
+function Dependencies({ deps, name }: { deps: SubscriptionDependency[]; name: SubscriptionName }): ReactNode {
+  if (deps.length === 0) return "–";
+  return deps.map((d) => (
+    <span
+      key={d.subscriptionId}
+      className="badge badge-subscription"
+      title={`Abhängig von ${name(d.subscriptionId)}:\n${d.resourceIds.map((r) => r.split("/").pop()).join("\n")}`}
+    >
+      ↗ {name(d.subscriptionId)}
+    </span>
+  ));
+}
 
 /** Overview of Internet paths: outbound per workload subnet, inbound per public entry point. */
 export function DefaultPathsView({
@@ -13,13 +30,33 @@ export function DefaultPathsView({
   direction,
   onDirection,
   onOpen,
+  subscriptions,
+  subscription,
 }: {
   paths: DefaultPathSummary[];
   inbound: InboundExposure[];
   direction: "outbound" | "inbound";
   onDirection: (d: "outbound" | "inbound") => void;
   onOpen: (id: string) => void;
+  /** Subscription names for display. */
+  subscriptions: { subscriptionId: string; name: string }[];
+  /** Selected subscription (workspace filter); empty = all. */
+  subscription: string;
 }) {
+  const names = useMemo(
+    () => new Map(subscriptions.map((s) => [s.subscriptionId.toLowerCase(), s.name])),
+    [subscriptions],
+  );
+  const name: SubscriptionName = (id) => (id ? (names.get(id) ?? id) : "–");
+  const sub = subscription.toLowerCase();
+  const scopedPaths = useMemo(
+    () => (sub ? paths.filter((p) => p.subscriptionId === sub) : paths),
+    [paths, sub],
+  );
+  const scopedInbound = useMemo(
+    () => (sub ? inbound.filter((e) => e.subscriptionId === sub) : inbound),
+    [inbound, sub],
+  );
   const toggle = (
     <div className="row">
       <button className={direction === "outbound" ? "" : "secondary"} onClick={() => onDirection("outbound")}>
@@ -31,9 +68,21 @@ export function DefaultPathsView({
     </div>
   );
   return direction === "inbound" ? (
-    <InboundView exposures={inbound} onOpen={onOpen} toggle={toggle} />
+    <InboundView
+      exposures={scopedInbound}
+      onOpen={onOpen}
+      toggle={toggle}
+      name={name}
+      scope={sub ? name(sub) : undefined}
+    />
   ) : (
-    <OutboundView paths={paths} onOpen={onOpen} toggle={toggle} />
+    <OutboundView
+      paths={scopedPaths}
+      onOpen={onOpen}
+      toggle={toggle}
+      name={name}
+      scope={sub ? name(sub) : undefined}
+    />
   );
 }
 
@@ -41,10 +90,14 @@ function OutboundView({
   paths,
   onOpen,
   toggle,
+  name,
+  scope,
 }: {
   paths: DefaultPathSummary[];
   onOpen: (subnetId: string) => void;
   toggle: React.ReactNode;
+  name: SubscriptionName;
+  scope: string | undefined;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [text, setText] = useState("");
@@ -72,20 +125,23 @@ function OutboundView({
               ? p.family === "ipv6"
               : true,
       )
-      .filter((p) => !q || `${p.vnet} ${p.subnet}`.toLowerCase().includes(q))
+      .filter((p) => !q || `${name(p.subscriptionId)} ${p.vnet} ${p.subnet}`.toLowerCase().includes(q))
       .sort(
         (a, b) =>
+          name(a.subscriptionId).localeCompare(name(b.subscriptionId)) ||
           a.vnet.localeCompare(b.vnet) ||
           a.subnet.localeCompare(b.subnet) ||
           a.family.localeCompare(b.family),
       );
-  }, [paths, filter, text]);
+  }, [paths, filter, text, name]);
 
   return (
     <div className="default-paths">
       <div className="row">
         <h2>Internet-Pfade je Subnet</h2>
-        <span className="muted small">konfigurationsbasiert · {counts.total} Pfade</span>
+        <span className="muted small">
+          konfigurationsbasiert · {counts.total} Pfade{scope ? ` in ${scope}` : " in allen Subscriptions"}
+        </span>
       </div>
       {toggle}
       <div className="row">
@@ -106,7 +162,7 @@ function OutboundView({
         </button>
         <input
           type="search"
-          placeholder="VNet / Subnet filtern"
+          placeholder="Subscription / VNet / Subnet filtern"
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
@@ -116,6 +172,7 @@ function OutboundView({
         <table className="grid">
           <thead>
             <tr>
+              <th>Subscription</th>
               <th>VNet</th>
               <th>Subnet</th>
               <th>IP</th>
@@ -123,6 +180,7 @@ function OutboundView({
               <th>Erste Route</th>
               <th>Egress</th>
               <th>Kontrolle</th>
+              <th title="Ressourcen in anderen Subscriptions, von denen der Pfad abhängt">Abhängig von</th>
               <th>Konfidenz</th>
             </tr>
           </thead>
@@ -134,6 +192,7 @@ function OutboundView({
                 onClick={() => onOpen(p.subnetId)}
                 title={p.summary}
               >
+                <td className="small">{name(p.subscriptionId)}</td>
                 <td>{p.vnet}</td>
                 <td>{p.subnet}</td>
                 <td>{p.family === "ipv4" ? "IPv4" : "IPv6"}</td>
@@ -148,6 +207,9 @@ function OutboundView({
                   )}
                 </td>
                 <td>{p.controlled ? p.securityControls.map((c) => c.split("/").pop()).join(", ") : "–"}</td>
+                <td>
+                  <Dependencies deps={p.dependencies} name={name} />
+                </td>
                 <td>{p.confidence}</td>
               </tr>
             ))}
@@ -180,10 +242,14 @@ function InboundView({
   exposures,
   onOpen,
   toggle,
+  name,
+  scope,
 }: {
   exposures: InboundExposure[];
   onOpen: (id: string) => void;
   toggle: React.ReactNode;
+  name: SubscriptionName;
+  scope: string | undefined;
 }) {
   const [filter, setFilter] = useState<InboundFilter>("open");
   const [text, setText] = useState("");
@@ -192,15 +258,22 @@ function InboundView({
     return exposures
       .filter(INBOUND_TESTS[filter])
       .filter(
-        (e) => !q || `${e.targetName} ${e.entry.name} ${e.entry.publicAddress}`.toLowerCase().includes(q),
+        (e) =>
+          !q ||
+          `${name(e.subscriptionId)} ${e.targetName} ${e.entry.name} ${e.entry.publicAddress}`
+            .toLowerCase()
+            .includes(q),
       );
-  }, [exposures, filter, text]);
+  }, [exposures, filter, text, name]);
 
   return (
     <div className="default-paths">
       <div className="row">
         <h2>Eingehende Internet-Pfade</h2>
-        <span className="muted small">konfigurationsbasiert · {exposures.length} Eingangspfade</span>
+        <span className="muted small">
+          konfigurationsbasiert · {exposures.length} Eingangspfade
+          {scope ? ` in ${scope}` : " in allen Subscriptions"}
+        </span>
       </div>
       {toggle}
       <div className="row">
@@ -220,6 +293,7 @@ function InboundView({
         <table className="grid">
           <thead>
             <tr>
+              <th>Subscription</th>
               <th>Eingang</th>
               <th>Öffentliche Adresse</th>
               <th>IP</th>
@@ -227,12 +301,14 @@ function InboundView({
               <th>Status</th>
               <th>Offene Ports</th>
               <th>Kontrolle</th>
+              <th title="Ressourcen in anderen Subscriptions, von denen der Pfad abhängt">Abhängig von</th>
               <th>Konfidenz</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((e) => (
               <tr key={e.id} className="clickable" onClick={() => onOpen(e.targetId)} title={e.summary}>
+                <td className="small">{name(e.subscriptionId)}</td>
                 <td>
                   {ENTRY_LABEL[e.entry.kind]} <span className="muted">{e.entry.name}</span>
                 </td>
@@ -258,6 +334,9 @@ function InboundView({
                   )}
                 </td>
                 <td>{e.controlled ? "Firewall/WAF" : "–"}</td>
+                <td>
+                  <Dependencies deps={e.dependencies} name={name} />
+                </td>
                 <td>{e.confidence}</td>
               </tr>
             ))}

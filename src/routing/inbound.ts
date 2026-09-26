@@ -1,3 +1,5 @@
+import { crossSubscriptionDependencies, type SubscriptionDependency } from "./dependencies.js";
+import { subscriptionOf } from "../utils/ids.js";
 import { cidrContains, ipFamilyOf, type IpFamily } from "../addressing/ip.js";
 import { internetNodeId } from "../graph/buildGraph.js";
 import type { NicEntity, NsgRuleEntity, SubnetEntity } from "../models/network.js";
@@ -41,6 +43,9 @@ export interface InboundExposure {
   hops: PathHop[];
   summary: string;
   confidence: Confidence;
+  subscriptionId?: string | undefined;
+  /** Resources in other subscriptions the path depends on (e.g. hub firewall with DNAT). */
+  dependencies: SubscriptionDependency[];
 }
 
 const PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7"];
@@ -210,6 +215,8 @@ function evaluate(
     hops,
     summary,
     confidence: weakest(...hops.map((h) => h.confidence)),
+    subscriptionId: subscriptionOf(target.id),
+    dependencies: crossSubscriptionDependencies(target.id, hops, [entry.resourceId]),
   };
 }
 

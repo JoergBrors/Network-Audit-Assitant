@@ -1,3 +1,5 @@
+import { crossSubscriptionDependencies, type SubscriptionDependency } from "./dependencies.js";
+import { subscriptionOf } from "../utils/ids.js";
 import type { IpFamily } from "../addressing/ip.js";
 import type { NormalizedInventory } from "../models/network.js";
 import type { EgressMechanism, PathStatus } from "../models/path.js";
@@ -22,6 +24,9 @@ export interface DefaultPathSummary {
   firstHop: string;
   summary: string;
   confidence: string;
+  subscriptionId?: string | undefined;
+  /** Resources in other subscriptions the path depends on. */
+  dependencies: SubscriptionDependency[];
 }
 
 /**
@@ -56,6 +61,12 @@ export function analyzeDefaultPaths(
           : "–",
         summary: r.summary,
         confidence: r.confidence,
+        subscriptionId: subscriptionOf(subnet.id),
+        dependencies: crossSubscriptionDependencies(subnet.id, r.hops, [
+          ...r.securityControls,
+          r.egress?.resourceId,
+          route?.originId,
+        ]),
       });
     }
   }
