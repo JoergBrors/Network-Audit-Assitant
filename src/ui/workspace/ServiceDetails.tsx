@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { assessServices } from "../../assessment/index.js";
 import type { PeDnsCheck } from "../../assessment/dns.js";
 import type { GraphNode } from "../../models/graph.js";
-import type { PaasServiceEntity } from "../../models/network.js";
+import type { PaasServiceEntity, SubnetEntity } from "../../models/network.js";
 import type { NetworkModel } from "../../pipeline/analyze.js";
 import type { EntityRef } from "./entityIndex.js";
 import type { NormalizedInventory } from "../../models/network.js";
@@ -15,6 +15,7 @@ export const EXPOSURE_LABEL: Record<PaasServiceEntity["exposure"], string> = {
   private: "nur privat",
   restricted: "öffentlich, eingeschränkt",
   public: "öffentlich, offen",
+  none: "kein eigener Endpunkt",
   unknown: "unbekannt",
 };
 
@@ -423,6 +424,41 @@ export function ServiceDetails({
           />
         </Box>,
       );
+  }
+
+  if (node.type === "subnet" && entity) {
+    const subnet = entity.entity as unknown as SubnetEntity;
+    if (subnet.delegations.length || subnet.serviceLinks?.length) {
+      const known = new Set(model.inventory.paasServices.map((x) => x.id));
+      sections.push(
+        <Box key="delegation" title="Delegation">
+          <Rows values={{ "Delegiert an": subnet.delegations.join(", ") || "–" }} />
+          {subnet.serviceLinks?.length ? (
+            <ul className="link-list small">
+              {subnet.serviceLinks.map((l, i) => (
+                <li key={i}>
+                  {l.kind === "serviceAssociation" ? "Service Association Link" : "Resource Navigation Link"}
+                  {l.linkedResourceType ? ` (${l.linkedResourceType})` : ""}:{" "}
+                  {l.linkId ? (
+                    known.has(l.linkId) ? (
+                      <Link id={l.linkId} />
+                    ) : (
+                      <span className="mono" title={l.linkId}>
+                        {l.linkId.split("/").pop()} <span className="status-warn">(nicht im Inventar)</span>
+                      </span>
+                    )
+                  ) : (
+                    (l.name ?? "–")
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="small muted">Kein Service Association Link – die Plattform meldet keinen Nutzer.</p>
+          )}
+        </Box>,
+      );
+    }
   }
 
   if (findings.length)

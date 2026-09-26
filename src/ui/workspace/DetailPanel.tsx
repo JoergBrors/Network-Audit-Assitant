@@ -14,7 +14,7 @@ import type {
   SubnetEntity,
 } from "../../models/network.js";
 import type { NetworkModel } from "../../pipeline/analyze.js";
-import { abbreviationOf, categoryOf } from "../graph/nodeStyle.js";
+import { nodeAbbreviation, nodeCategory } from "../graph/nodeStyle.js";
 import type { EntityRef } from "./entityIndex.js";
 import { downloadJson } from "./download.js";
 import type { ComparisonGraph } from "../../drift/diff.js";
@@ -71,7 +71,7 @@ export function DetailPanel({
   return (
     <div className="detail">
       <div className="detail-header">
-        <span className={`type-abbr cat-${categoryOf(node.type)}`}>{abbreviationOf(node.type)}</span>
+        <span className={`type-abbr cat-${nodeCategory(node)}`}>{nodeAbbreviation(node)}</span>
         <div>
           <div className="muted small">{NODE_TYPE_LABELS[node.type]}</div>
           <h2>{node.name}</h2>

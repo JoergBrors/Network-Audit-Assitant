@@ -696,6 +696,8 @@ export function buildGraph(inv: NormalizedInventory): NetworkGraph {
       parentId: containerOf(p),
       properties: {
         service: p.service,
+        azureType: p.azureType,
+        ...(p.kind ? { kind: p.kind } : {}),
         exposure: p.exposure,
         publicNetworkAccess: p.publicNetworkAccess,
         ...(p.firewall.defaultAction ? { firewallDefaultAction: p.firewall.defaultAction } : {}),

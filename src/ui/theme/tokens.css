@@ -26,6 +26,12 @@
   --cat-dns: #7a4fd6;
   --cat-hybrid: #a16207;
   --cat-external: #8a8f98;
+  --cat-app: #4338ca;
+  --cat-data: #be185d;
+  --cat-integration: #047857;
+  --cat-analytics: #9a3412;
+  --cat-vdi: #0369a1;
+  --cat-monitoring: #57534e;
 
   --edge-peering: #2f6fde;
   --edge-route: #b35c00;
@@ -78,6 +84,12 @@
     --cat-dns: #a585ec;
     --cat-hybrid: #e0b54a;
     --cat-external: #7c838e;
+    --cat-app: #8b8cf5;
+    --cat-data: #f07aae;
+    --cat-integration: #4fd1a5;
+    --cat-analytics: #f39a6b;
+    --cat-vdi: #5ab8f0;
+    --cat-monitoring: #b8b2ab;
 
     --edge-peering: #6f9ef0;
     --edge-route: #f0a33a;

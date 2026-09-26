@@ -3,7 +3,7 @@ import type { GraphIndex } from "../../graph/view.js";
 import { ancestors, compareNodes } from "../../graph/view.js";
 import type { GraphNode } from "../../models/graph.js";
 import { NODE_TYPE_LABELS } from "../../models/graph.js";
-import { abbreviationOf, categoryOf } from "../graph/nodeStyle.js";
+import { nodeAbbreviation, nodeCategory } from "../graph/nodeStyle.js";
 import type { ChangeKind, ComparisonGraph } from "../../drift/diff.js";
 import { KIND_LABEL } from "./Changes.js";
 
@@ -118,7 +118,7 @@ const TreeRow = memo(function TreeRow({
       >
         {childCount === 0 ? "" : isOpen ? "▾" : "▸"}
       </button>
-      <span className={`type-abbr small cat-${categoryOf(node.type)}`}>{abbreviationOf(node.type)}</span>
+      <span className={`type-abbr small cat-${nodeCategory(node)}`}>{nodeAbbreviation(node)}</span>
       <span className="tree-name">{node.name}</span>
       {node.topology &&
         (node.topology.classification === "hub" || node.topology.classification === "spoke") && (

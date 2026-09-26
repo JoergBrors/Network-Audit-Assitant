@@ -109,6 +109,21 @@ export function assessPaas(
       );
     }
     findings.push(...ingressEgressFindings(s, label));
+    if (
+      (s.azureType === "microsoft.fabric/capacities" ||
+        s.azureType === "microsoft.powerbidedicated/capacities") &&
+      s.ingress?.mode === "internet"
+    )
+      findings.push(
+        finding(
+          "paas",
+          "LOW",
+          "FABRIC_NO_PRIVATE_LINK",
+          `${label}: kein Private Link für Fabric/Power BI`,
+          "Im Inventar gibt es keinen Private-Link-Dienst für Fabric/Power BI. Der Zugriff erfolgt über das öffentliche Internet und ist nur über Entra ID / Conditional Access geschützt. Für private Nutzung Tenant- oder Workspace-Private-Link einrichten und im Admin-Portal „Block Public Internet Access“ aktivieren.",
+          [s.id],
+        ),
+      );
     const broken = (dnsByTarget.get(s.id) ?? []).filter((c) =>
       ["missing-zone", "missing-record", "not-linked"].includes(c.status),
     );
@@ -126,7 +141,9 @@ export function assessPaas(
     }
   }
 
-  const byExposure = { private: 0, restricted: 0, public: 0, unknown: 0 };
+  findings.push(...delegationFindings(inv));
+
+  const byExposure = { private: 0, restricted: 0, public: 0, none: 0, unknown: 0 };
   for (const s of inv.paasServices) byExposure[s.exposure]++;
   return {
     summary: {
@@ -229,6 +246,66 @@ function ingressEgressFindings(s: PaasServiceEntity, label: string): Finding[] {
           ),
         );
       break;
+  }
+  return out;
+}
+
+/**
+ * Delegated subnets: the user recorded in the service association link must be in the inventory,
+ * otherwise the discovery misses it (other subscription, missing read permission); delegations without
+ * any user reserve address space.
+ */
+function delegationFindings(inv: NormalizedInventory): Finding[] {
+  const out: Finding[] = [];
+  const known = new Set<string>([
+    ...inv.paasServices.map((s) => s.id),
+    ...inv.dnsResolvers.map((d) => d.id),
+    ...inv.otherNetworkResources.map((g) => g.id),
+    ...inv.applicationGateways.map((g) => g.id),
+  ]);
+  const used = new Set<string>([
+    ...inv.paasServices.flatMap((s) => [...s.vnetIntegration.subnetIds, ...(s.egress?.subnetIds ?? [])]),
+    ...inv.dnsResolvers.flatMap((d) => d.subnetIds),
+    ...inv.otherNetworkResources.flatMap((g) => g.subnetIds),
+  ]);
+  for (const subnet of inv.subnets) {
+    if (subnet.delegations.length === 0) continue;
+    const delegation = subnet.delegations.join(", ");
+    const missing = (subnet.serviceLinks ?? []).filter((l) => l.linkId && !known.has(l.linkId));
+    if (missing.length) {
+      out.push(
+        finding(
+          "paas",
+          "INFO",
+          "DELEGATION_USER_NOT_DISCOVERED",
+          `Subnet ${subnet.name}: Nutzer der Delegation nicht im Inventar`,
+          `Delegation ${delegation}; laut Service Association Link genutzt von ${missing
+            .map((l) => `${lastSegment(l.linkId!)} (${l.linkedResourceType ?? "?"})`)
+            .join(
+              ", ",
+            )}. Die Ressource liegt vermutlich in einer nicht gelesenen Subscription oder es fehlen Leserechte – ihre Ingress/Egress-Konfiguration fehlt in der Bewertung.`,
+          [subnet.id],
+        ),
+      );
+      continue;
+    }
+    const hasLinks = (subnet.serviceLinks?.length ?? 0) > 0;
+    if (
+      !hasLinks &&
+      !used.has(subnet.id) &&
+      subnet.connectedResourceIds.length === 0 &&
+      subnet.ipConfigurationCount === 0
+    )
+      out.push(
+        finding(
+          "paas",
+          "INFO",
+          "DELEGATION_UNUSED",
+          `Subnet ${subnet.name}: delegiert an ${delegation}, aber ohne Nutzer`,
+          "Kein Dienst nutzt das Subnet (kein Service Association Link, keine IP-Konfiguration). Adressraum ist reserviert; Delegation prüfen oder Subnet freigeben.",
+          [subnet.id],
+        ),
+      );
   }
   return out;
 }

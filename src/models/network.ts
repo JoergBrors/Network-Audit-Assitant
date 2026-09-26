@@ -79,6 +79,19 @@ export interface SubnetEntity {
   connectedResourceIds: string[];
   /** Number of IP configurations in the subnet (incl. rolled-up scale set instances). */
   ipConfigurationCount: number;
+  /**
+   * Service association / resource navigation links: the resource that uses a delegated subnet
+   * (App Service plan, Container Apps environment, flexible server, …) as the platform records it.
+   */
+  serviceLinks?: SubnetServiceLink[] | undefined;
+}
+
+export interface SubnetServiceLink {
+  kind: "serviceAssociation" | "resourceNavigation";
+  name?: string | undefined;
+  linkedResourceType?: string | undefined;
+  /** Linked resource ID (lowercase) when the link is a resource ID. */
+  linkId?: string | undefined;
 }
 
 export interface PeeringEntity {
@@ -393,13 +406,14 @@ export interface DnsResolverEntity extends BaseEntity {
 }
 
 /** Public network access setting of a PaaS service (normalized across resource providers). */
-export type PublicNetworkAccess = "Enabled" | "Disabled" | "SecuredByPerimeter" | "Unknown";
+/** `NotApplicable`: the resource has no network endpoint of its own (App Service plan, DevOps pool). */
+export type PublicNetworkAccess = "Enabled" | "Disabled" | "SecuredByPerimeter" | "NotApplicable" | "Unknown";
 
 /**
  * Network exposure of a PaaS endpoint: `private` = reachable only via Private Link / VNet,
  * `restricted` = public endpoint limited by firewall rules, `public` = open to the Internet.
  */
-export type PaasExposure = "private" | "restricted" | "public" | "unknown";
+export type PaasExposure = "private" | "restricted" | "public" | "none" | "unknown";
 
 /** One inbound access rule of a PaaS service (IP restriction, firewall rule, authorized range). */
 export interface PaasAccessRule {

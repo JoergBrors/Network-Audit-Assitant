@@ -256,6 +256,9 @@ describe("PaaS ingress/egress profiles", () => {
     expect(
       findings.find((f) => f.resourceIds[0] === lc(LAW) && f.code === "PAAS_PUBLIC_OPEN")!.severity,
     ).toBe("LOW");
-    expect(svc(FABRIC).ingress!.summary).toContain("Admin-Portal");
+    // Without a tenant Private Link, Fabric is reachable from the Internet (Microsoft default).
+    expect(svc(FABRIC).ingress!.mode).toBe("internet");
+    expect(svc(FABRIC).exposure).toBe("public");
+    expect(codes(FABRIC)).toContain("FABRIC_NO_PRIVATE_LINK");
   });
 });

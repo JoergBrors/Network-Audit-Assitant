@@ -1539,6 +1539,11 @@ tr.clickable:hover td {
   background: var(--surface-2);
   color: var(--text-muted, #666);
 }
+.exposure-none {
+  background: transparent;
+  color: var(--text-muted, #666);
+  border: 1px dashed var(--border);
+}
 .assessment-tiles {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -1814,4 +1819,66 @@ details.panel[open] > summary::before {
   background: color-mix(in srgb, var(--surface) 80%, transparent);
   border-radius: 3px;
   padding: 0 0.2em;
+}
+
+/* --- PaaS service groups (type abbreviation, node stripe, minimap) --- */
+.cat-app .type-abbr,
+.type-abbr.cat-app {
+  background: var(--cat-app);
+}
+.topo-node.cat-app {
+  border-left-color: var(--cat-app);
+}
+.react-flow__minimap-node.rf-app {
+  fill: var(--cat-app);
+}
+.cat-data .type-abbr,
+.type-abbr.cat-data {
+  background: var(--cat-data);
+}
+.topo-node.cat-data {
+  border-left-color: var(--cat-data);
+}
+.react-flow__minimap-node.rf-data {
+  fill: var(--cat-data);
+}
+.cat-integration .type-abbr,
+.type-abbr.cat-integration {
+  background: var(--cat-integration);
+}
+.topo-node.cat-integration {
+  border-left-color: var(--cat-integration);
+}
+.react-flow__minimap-node.rf-integration {
+  fill: var(--cat-integration);
+}
+.cat-analytics .type-abbr,
+.type-abbr.cat-analytics {
+  background: var(--cat-analytics);
+}
+.topo-node.cat-analytics {
+  border-left-color: var(--cat-analytics);
+}
+.react-flow__minimap-node.rf-analytics {
+  fill: var(--cat-analytics);
+}
+.cat-vdi .type-abbr,
+.type-abbr.cat-vdi {
+  background: var(--cat-vdi);
+}
+.topo-node.cat-vdi {
+  border-left-color: var(--cat-vdi);
+}
+.react-flow__minimap-node.rf-vdi {
+  fill: var(--cat-vdi);
+}
+.cat-monitoring .type-abbr,
+.type-abbr.cat-monitoring {
+  background: var(--cat-monitoring);
+}
+.topo-node.cat-monitoring {
+  border-left-color: var(--cat-monitoring);
+}
+.react-flow__minimap-node.rf-monitoring {
+  fill: var(--cat-monitoring);
 }
