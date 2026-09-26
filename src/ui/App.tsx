@@ -184,7 +184,7 @@ export function App({ session, startupError }: AppProps) {
             disabled={!model}
             title={
               aiConfigured
-                ? "Anonymisierten Export von Azure OpenAI analysieren lassen (z. B. IPv6-Lecks)"
+                ? "Export mit dem internen Azure-OpenAI-Deployment analysieren (Chat, Report, PDF)"
                 : "Azure OpenAI ist nicht konfiguriert (VITE_AZURE_OPENAI_* in .env.local)"
             }
           >
@@ -229,7 +229,13 @@ export function App({ session, startupError }: AppProps) {
       </header>
 
       {showAiPanel && model && (
-        <AiAnalysisPanel buildExport={buildExportForAi} onClose={() => setShowAiPanel(false)} />
+        <AiAnalysisPanel
+          buildExport={buildExportForAi}
+          source={source || "Discovery"}
+          credential={account ? session?.credential : undefined}
+          accountName={account?.username}
+          onClose={() => setShowAiPanel(false)}
+        />
       )}
 
       {(startupError || error) && (

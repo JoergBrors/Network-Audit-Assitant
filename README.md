@@ -40,6 +40,7 @@ npm run dev                  # http://localhost:5173
 | JSON exportieren | `azure-network-assessment-YYYYMMDD-HHMM.json` (normalisiertes Inventar + Beziehungsgraph) |
 | JSON importieren | früheren Export offline laden (ohne Anmeldung) |
 | Mit JSON vergleichen | früheren Export als Basis: NEU / GEÄNDERT / ENTFERNT im Graphen, Δ-Zähler, „Nur Änderungen“, Diff-Export |
+| KI-Analyse | optional, internes Azure-OpenAI-Deployment (Anmeldung per Entra ID): Chat über den unveränderten Export mit Code Interpreter und Streaming, Dateien/Bilder anhängen, erzeugte Dateien herunterladen, Report als PDF/JSON. Einrichtung: [ENTRA-ID-SETUP.md § 8.1](ENTRA-ID-SETUP.md) |
 
 ## CLI
 

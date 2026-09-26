@@ -1,238 +1,430 @@
+import type OpenAI from "openai";
+import { toFile } from "openai";
+import type {
+  ResponseCreateParamsStreaming,
+  ResponseInputContent,
+} from "openai/resources/responses/responses";
 import type { AssessmentExport } from "../export/assessmentJson.js";
-import { sanitizeExport, type SanitizeOptions } from "../export/sanitize.js";
 import {
-  callAzureOpenAi,
-  deleteFileSearchDocument,
-  uploadFileSearchDocument,
+  AzureOpenAiError,
+  toAzureOpenAiError,
   type AzureOpenAiConfig,
-  type CallOptions,
-  type FileSearchDocument,
-  type ImageAttachment,
+  type ReasoningEffort,
 } from "./azureOpenAi.js";
 
 export interface AiFinding {
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
   title: string;
   description: string;
-  /** Pseudonymized resource references from the sanitized export (e.g. "res-1a2b3c4d"). */
+  /** Affected resources (names, with resource group where helpful). */
   affected: string[];
 }
 
-/** Structured result of the whole chat session, typed so the frontend can render it (e.g. a PDF
- * report) without re-parsing free text. See `REPORT_JSON_SCHEMA` for the exact contract enforced on
- * the model via Structured Outputs. */
+/** Structured result of a chat session (Structured Outputs, see `REPORT_JSON_SCHEMA`). */
 export interface AiReport {
   summary: string;
   findings: AiFinding[];
   recommendations: string[];
 }
 
+/** A file in the session's Code Interpreter container: the export or a user attachment. */
+export interface SessionFile {
+  id: string;
+  name: string;
+  kind: "export" | "attachment";
+}
+
+/** A file the model created in the container (chart, CSV, …), cited in its answer. */
+export interface GeneratedFile {
+  containerId: string;
+  fileId: string;
+  filename: string;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
-  /** Data URIs of images attached to this (user) message, for rendering a thumbnail in the transcript. */
+  /** Data URIs of images attached to this (user) message. */
   images?: string[];
+  /** Names of files attached to this (user) message. */
+  attachments?: string[];
+  /** Files the model generated for this (assistant) message. */
+  generated?: GeneratedFile[];
 }
 
 /**
- * One ongoing chat session. The sanitized export is uploaded ONCE as a file and indexed into a
- * temporary vector store; every turn (including the first) uses the `file_search` tool against that
- * store instead of pasting the export into the prompt — the model only pulls in the chunks relevant
- * to the current question, so token usage per call stays small regardless of tenant size, and chat
- * turns are chained via `previous_response_id` so follow-up questions don't repeat prior answers.
- * `endSession` deletes the uploaded file/vector store; call it when the user closes the panel.
+ * One chat session. The export is uploaded once, unchanged (internal Azure OpenAI deployment), and
+ * mounted into a Code Interpreter container: the model answers by querying the JSON with Python
+ * instead of guessing from retrieved chunks. Turns are chained with `previous_response_id`, so each
+ * request carries only the new message; answers are streamed.
  */
 export interface AiChatSession {
-  /** Stable per-session id (not an Azure id) — used only for the local session directory (browser
-   * history of past sessions), never sent to Azure OpenAI. */
+  /** Local id (session directory, prompt cache key) — not an Azure id. */
   id: string;
-  config: AzureOpenAiConfig;
-  doc: FileSearchDocument;
-  /** Response id of the most recent turn; pass-through target for the next call. */
-  lastResponseId: string;
+  files: SessionFile[];
+  /** Stored responses of this session (deleted with the session). */
+  responseIds: string[];
+  lastResponseId?: string | undefined;
+  /** Export overview, sent with the first question only. */
+  overview: string;
   messages: ChatMessage[];
-  sanitizationStats: { pseudonymizedTokens: number; publicIpsReplaced: number };
 }
 
-export type StartSessionPhase = "sanitizing" | "uploading" | "indexing" | "ready";
-
-export interface StartSessionOptions {
-  signal?: AbortSignal;
-  onProgress?: (phase: StartSessionPhase) => void;
+export interface AiContext {
+  client: OpenAI;
+  config: AzureOpenAiConfig;
 }
 
-const SESSION_INSTRUCTIONS = `Du bist ein Azure-Netzwerk-Security-Reviewer. Im angehängten Dokument \
-(per file_search durchsuchbar) liegt dir ein anonymisierter JSON-Export einer Azure-Netzwerktopologie \
-vor (Ressourcennamen, Subscription-/Resource-Group-IDs und öffentliche IP-Adressen sind durch \
-Pseudonyme ersetzt; Struktur, Beziehungen, Präfixlängen, Ports, Protokolle, NSG-/Routing-/ \
-Firewall-Entscheidungen und private Adressbereiche sind unverändert). Durchsuche das Dokument gezielt \
-für jede Frage, statt zu raten. Antworte kurz und konkret, referenziere immer die betroffenen \
-Ressourcen-Pseudonyme (z. B. "res-1a2b3c4d"). Erfinde nie Ressourcennamen oder IP-Adressen, die nicht \
-im Dokument vorkommen. Bestätige jetzt in einem Satz, dass du bereit bist – ohne JSON, ohne Analyse.`;
+export interface TurnCallbacks {
+  signal?: AbortSignal | undefined;
+  /** Streamed answer text so far. */
+  onText?: ((text: string) => void) | undefined;
+  /** Short activity label, e.g. while Python runs in the container. */
+  onActivity?: ((label: string) => void) | undefined;
+}
 
-const REPORT_INSTRUCTIONS = `Durchsuche das Dokument gezielt nach 1) IPv6-spezifischen Lecks – \
-Subnets/NICs mit öffentlicher IPv6-Konnektivität, die eine zentrale Sicherheitskontrolle (Azure \
-Firewall/NVA) umgehen, obwohl IPv4 kontrolliert ist; NSG-Regeln, die IPv6 versehentlich breiter \
-erlauben als IPv4; fehlende Default-Routen für IPv6 (prüfe dafür Subnet, NSG-Regeln UND Routen \
-gemeinsam, bevor du einen Fund meldest) und 2) weiteren Architektur-Gaps (ungesicherte Inbound-Pfade, \
-asymmetrisches Routing, fehlende/unsichere Daten). Beziehe auch bereits im Chat besprochene Punkte \
-ein. Fasse alles zu einem strukturierten Bericht zusammen: kurze Gesamteinschätzung, alle Findings, \
-priorisierte Empfehlungen. Nutze ausschließlich Ressourcen/Pseudonyme aus dem Dokument.`;
+const INSTRUCTIONS = `Du bist ein erfahrener Reviewer für Azure-Netzwerkarchitektur und -sicherheit \
+und arbeitest für das interne Audit-Team. Im Python-Sandbox-Container (Code Interpreter) liegt unter \
+/mnt/data der vollständige, nicht anonymisierte JSON-Export einer Azure-Netzwerklandschaft \
+(Dateiname beginnt mit "azure-network-assessment"), dazu ggf. weitere vom Nutzer angehängte Dateien.
+
+Aufbau des Exports: Top-Level-Arrays je Ressourcentyp (u. a. subscriptions, vnets, subnets, peerings, \
+routeTables, routes, nsgs, networkInterfaces, virtualMachines, publicIps, natGateways, firewalls, \
+firewallPolicies, ruleCollectionGroups, loadBalancers, applicationGateways, vpnGateways, privateEndpoints, \
+privateDnsZones, virtualHubs) mit normalisierten Objekten; Resource IDs sind kleingeschrieben und \
+verweisen aufeinander (z. B. subnets[].nsgId, networkInterfaces[].nsgId, subnets[].routeTableId). \
+nsgs[].rules und nsgs[].defaultRules enthalten die Regeln; "graph" enthält Knoten und Beziehungen, \
+"summary" und "discovery" Kennzahlen und Lücken der Datenerfassung.
+
+Arbeitsweise:
+- Beantworte Fragen zu konkreten Daten immer, indem du den Export mit Python lädt und gezielt \
+auswertest (json.load einmal, dann filtern). Rate nie, erfinde keine Ressourcen, Adressen oder Regeln.
+- Prüfe Sicherheitsaussagen im Zusammenhang: Subnet- und NIC-NSG, Routen/UDRs, Firewall, Public IPs.
+- Nenne betroffene Ressourcen mit Namen und Resource Group.
+- Antworte auf Deutsch, knapp und konkret; Listen und kurze Tabellen sind erwünscht, keine langen \
+Einleitungen.
+- Wenn eine Datei (CSV, Diagramm als PNG) hilft, erzeuge sie unter /mnt/data und verweise darauf.
+- Zeige keinen Python-Code, außer der Nutzer fragt danach.`;
+
+const REPORT_PROMPT = `Erstelle jetzt den Abschlussbericht dieser Sitzung. Werte den Export dafür \
+mit Python systematisch aus: 1) IPv6-spezifische Lücken – Subnets/NICs mit öffentlicher \
+IPv6-Konnektivität, die eine zentrale Kontrolle (Azure Firewall/NVA) umgehen, während IPv4 kontrolliert \
+ist; NSG-Regeln, die IPv6 breiter erlauben als IPv4; fehlende IPv6-Default-Routen (Subnet, NSG und \
+Routen gemeinsam prüfen); 2) weitere Architektur- und Sicherheitslücken – ungeschützte eingehende \
+Pfade, offene Management-Ports aus dem Internet, asymmetrisches Routing, Default Outbound Access, \
+Lücken der Datenerfassung. Beziehe die im Chat besprochenen Punkte ein. Liefere eine kurze \
+Gesamteinschätzung, alle Findings mit betroffenen Ressourcen und priorisierte Empfehlungen.`;
 
 const REPORT_JSON_SCHEMA = {
-  name: "network_audit_report",
-  schema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      summary: { type: "string" },
-      findings: {
-        type: "array",
-        items: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            severity: { type: "string", enum: ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] },
-            title: { type: "string" },
-            description: { type: "string" },
-            affected: { type: "array", items: { type: "string" } },
-          },
-          required: ["severity", "title", "description", "affected"],
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    summary: { type: "string" },
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          severity: { type: "string", enum: ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] },
+          title: { type: "string" },
+          description: { type: "string" },
+          affected: { type: "array", items: { type: "string" } },
         },
+        required: ["severity", "title", "description", "affected"],
       },
-      recommendations: { type: "array", items: { type: "string" } },
     },
-    required: ["summary", "findings", "recommendations"],
+    recommendations: { type: "array", items: { type: "string" } },
   },
+  required: ["summary", "findings", "recommendations"],
 } as const;
 
+export const WELCOME_TEXT =
+  "Der Export ist hochgeladen. Stellen Sie Ihre Frage – ich werte die Daten direkt mit Python aus.";
+
+/** Compact overview of the export (counts per section) so the model needs no exploration step. */
+export function exportOverview(data: AssessmentExport, fileName: string): string {
+  const counts = Object.entries(data as unknown as Record<string, unknown>)
+    .map(([key, value]) => {
+      if (Array.isArray(value)) return value.length > 0 ? `${key}: ${value.length}` : undefined;
+      if (value && typeof value === "object" && Array.isArray((value as { nodes?: unknown }).nodes)) {
+        const g = value as { nodes: unknown[]; edges?: unknown[] };
+        return `${key}: ${g.nodes.length} Knoten, ${g.edges?.length ?? 0} Kanten`;
+      }
+      return undefined;
+    })
+    .filter(Boolean);
+  return `[Kontext: Export-Datei /mnt/data/…${fileName} – ${counts.join(", ")}]`;
+}
+
 /**
- * Sanitizes the export (see src/export/sanitize.ts — real names/IDs/public IPs are replaced by
- * deterministic pseudonyms), uploads it once to a temporary vector store, and opens a chat session
- * backed by `file_search` against that store. This keeps every turn — including this first one —
- * small: the model retrieves only the chunks relevant to what's actually asked, instead of the
- * complete export counting against the token budget of every call (which previously caused
- * `HTTP 429 rate_limit_exceeded` even on the very first message for larger tenants).
+ * Uploads the export unchanged as one JSON file and opens a session. No model call happens here:
+ * the first question already runs against the file, so the session is ready right after upload.
  */
 export async function startAnalysisSession(
-  input: AssessmentExport,
-  config: AzureOpenAiConfig,
-  sanitizeOptions: SanitizeOptions,
-  options: StartSessionOptions = {},
+  ctx: AiContext,
+  data: AssessmentExport,
+  options: { signal?: AbortSignal | undefined; fileName?: string } = {},
 ): Promise<AiChatSession> {
-  const callOptions: CallOptions = options.signal ? { signal: options.signal } : {};
-  options.onProgress?.("sanitizing");
-  const { export: sanitized, stats } = await sanitizeExport(input, sanitizeOptions);
-
-  options.onProgress?.("uploading");
-  const doc = await uploadFileSearchDocument(
-    config,
-    JSON.stringify(sanitized),
-    "azure-network-assessment-sanitized.json",
-    callOptions,
-  );
-
-  options.onProgress?.("indexing");
+  const fileName = options.fileName ?? "azure-network-assessment.json";
   try {
-    const res = await callAzureOpenAi(config, SESSION_INSTRUCTIONS, {
-      ...callOptions,
-      vectorStoreIds: [doc.vectorStoreId],
-    });
-    options.onProgress?.("ready");
+    const file = await ctx.client.files.create(
+      {
+        file: await toFile(new Blob([JSON.stringify(data)], { type: "application/json" }), fileName),
+        purpose: "assistants",
+      },
+      { signal: options.signal },
+    );
     return {
       id: crypto.randomUUID(),
-      config,
-      doc,
-      lastResponseId: res.id,
-      messages: [{ role: "assistant", text: res.text }],
-      sanitizationStats: stats,
+      files: [{ id: file.id, name: fileName, kind: "export" }],
+      responseIds: [],
+      overview: exportOverview(data, fileName),
+      messages: [{ role: "assistant", text: WELCOME_TEXT }],
     };
   } catch (e) {
-    await deleteFileSearchDocument(config, doc);
-    throw e;
+    throw toAzureOpenAiError(e);
+  }
+}
+
+/** Uploads user attachments (PDF, CSV, JSON, …) into the session's container. */
+async function uploadAttachments(
+  ctx: AiContext,
+  attachments: File[],
+  signal?: AbortSignal,
+): Promise<SessionFile[]> {
+  return Promise.all(
+    attachments.map(async (f) => {
+      const uploaded = await ctx.client.files.create(
+        { file: await toFile(f, f.name), purpose: "assistants" },
+        { signal },
+      );
+      return { id: uploaded.id, name: f.name, kind: "attachment" as const };
+    }),
+  );
+}
+
+function nextEffort(effort: ReasoningEffort | undefined): ReasoningEffort | undefined {
+  if (!effort) return undefined;
+  return effort === "minimal" || effort === "low" ? "medium" : effort;
+}
+
+interface TurnResult {
+  id: string;
+  text: string;
+  generated: GeneratedFile[];
+}
+
+/** One streamed Responses API turn with Code Interpreter over the session's files. */
+async function runTurn(
+  ctx: AiContext,
+  session: AiChatSession,
+  content: ResponseInputContent[],
+  callbacks: TurnCallbacks,
+  extra: { effort?: ReasoningEffort | undefined; jsonSchema?: boolean } = {},
+): Promise<TurnResult> {
+  const effort = extra.effort ?? ctx.config.reasoningEffort;
+  const body: ResponseCreateParamsStreaming = {
+    model: ctx.config.model,
+    instructions: INSTRUCTIONS,
+    input: [{ role: "user", content }],
+    tools: [
+      { type: "code_interpreter", container: { type: "auto", file_ids: session.files.map((f) => f.id) } },
+    ],
+    store: true,
+    stream: true,
+    truncation: "auto",
+    prompt_cache_key: "network-audit-ai",
+    ...(session.lastResponseId ? { previous_response_id: session.lastResponseId } : {}),
+    ...(effort ? { reasoning: { effort } } : {}),
+    ...(extra.jsonSchema
+      ? {
+          text: {
+            format: {
+              type: "json_schema",
+              name: "network_audit_report",
+              schema: REPORT_JSON_SCHEMA,
+              strict: true,
+            },
+          },
+        }
+      : {}),
+  };
+
+  let text = "";
+  try {
+    const stream = await ctx.client.responses.create(body, { signal: callbacks.signal });
+    for await (const event of stream) {
+      switch (event.type) {
+        case "response.output_text.delta":
+          text += event.delta;
+          callbacks.onText?.(text);
+          break;
+        case "response.code_interpreter_call.in_progress":
+        case "response.code_interpreter_call.interpreting":
+          callbacks.onActivity?.("Werte die Daten mit Python aus …");
+          break;
+        case "response.reasoning_summary_part.added":
+        case "response.in_progress":
+          callbacks.onActivity?.("Denkt nach …");
+          break;
+        case "response.completed": {
+          const r = event.response;
+          return { id: r.id, text: outputText(r) || text, generated: generatedFiles(r) };
+        }
+        case "response.incomplete":
+          throw new AzureOpenAiError(
+            `Antwort unvollständig (${event.response.incomplete_details?.reason ?? "unbekannt"}).`,
+          );
+        case "response.failed":
+          throw new AzureOpenAiError(
+            `Azure OpenAI: ${event.response.error?.message ?? "Antwort fehlgeschlagen"}`,
+          );
+        case "error":
+          throw new AzureOpenAiError(`Azure OpenAI: ${event.message}`);
+      }
+    }
+  } catch (e) {
+    throw toAzureOpenAiError(e);
+  }
+  throw new AzureOpenAiError("Die Verbindung zu Azure OpenAI wurde vor dem Ende der Antwort geschlossen.");
+}
+
+type CompletedResponse = Extract<Awaited<ReturnType<OpenAI["responses"]["retrieve"]>>, { output: unknown }>;
+
+function messageContents(r: CompletedResponse) {
+  return r.output.flatMap((item) => (item.type === "message" ? item.content : []));
+}
+
+function outputText(r: CompletedResponse): string {
+  return messageContents(r)
+    .map((c) => (c.type === "output_text" ? c.text : ""))
+    .join("");
+}
+
+function generatedFiles(r: CompletedResponse): GeneratedFile[] {
+  const out = new Map<string, GeneratedFile>();
+  for (const c of messageContents(r)) {
+    if (c.type !== "output_text") continue;
+    for (const a of c.annotations) {
+      if (a.type === "container_file_citation") {
+        out.set(a.file_id, { containerId: a.container_id, fileId: a.file_id, filename: a.filename });
+      }
+    }
+  }
+  return [...out.values()];
+}
+
+/**
+ * Sends one question. `images` (data URIs) go inline as vision input; `attachments` are uploaded
+ * into the container and stay available for the rest of the session. The answer streams through
+ * `callbacks.onText`.
+ */
+export async function sendChatMessage(
+  ctx: AiContext,
+  session: AiChatSession,
+  text: string,
+  options: TurnCallbacks & { images?: string[]; attachments?: File[] } = {},
+): Promise<AiChatSession> {
+  const images = options.images ?? [];
+  const attachments = options.attachments ?? [];
+  let files = session.files;
+  if (attachments.length) {
+    options.onActivity?.(`Lade ${attachments.length} Datei(en) hoch …`);
+    try {
+      files = [...files, ...(await uploadAttachments(ctx, attachments, options.signal))];
+    } catch (e) {
+      throw toAzureOpenAiError(e);
+    }
+  }
+  const firstQuestion = session.lastResponseId === undefined;
+  const attachmentNote = attachments.length
+    ? `\n\n[Neu angehängte Dateien in /mnt/data: ${attachments.map((f) => f.name).join(", ")}]`
+    : "";
+  const content: ResponseInputContent[] = [
+    { type: "input_text", text: `${firstQuestion ? `${session.overview}\n\n` : ""}${text}${attachmentNote}` },
+    ...images.map((url) => ({ type: "input_image" as const, image_url: url, detail: "auto" as const })),
+  ];
+  const withFiles = { ...session, files };
+  const res = await runTurn(ctx, withFiles, content, options);
+  const userMessage: ChatMessage = {
+    role: "user",
+    text,
+    ...(images.length ? { images } : {}),
+    ...(attachments.length ? { attachments: attachments.map((f) => f.name) } : {}),
+  };
+  return {
+    ...withFiles,
+    lastResponseId: res.id,
+    responseIds: [...session.responseIds, res.id],
+    messages: [
+      ...session.messages,
+      userMessage,
+      { role: "assistant", text: res.text, ...(res.generated.length ? { generated: res.generated } : {}) },
+    ],
+  };
+}
+
+/** Asks for the final report as strict JSON (Structured Outputs) within the same session. */
+export async function generateReport(
+  ctx: AiContext,
+  session: AiChatSession,
+  callbacks: TurnCallbacks = {},
+): Promise<{ report: AiReport; session: AiChatSession }> {
+  const prompt = `${session.lastResponseId === undefined ? `${session.overview}\n\n` : ""}${REPORT_PROMPT}`;
+  const res = await runTurn(ctx, session, [{ type: "input_text", text: prompt }], callbacks, {
+    effort: nextEffort(ctx.config.reasoningEffort),
+    jsonSchema: true,
+  });
+  return {
+    report: parseReport(res.text),
+    session: { ...session, lastResponseId: res.id, responseIds: [...session.responseIds, res.id] },
+  };
+}
+
+/** Downloads a file the model created in the container (chart, CSV, …). */
+export async function downloadGeneratedFile(ctx: AiContext, file: GeneratedFile): Promise<Blob> {
+  try {
+    const res = await ctx.client.containers.files.content.retrieve(file.fileId, {
+      container_id: file.containerId,
+    });
+    return await res.blob();
+  } catch (e) {
+    throw toAzureOpenAiError(e);
   }
 }
 
 /**
- * Reconstructs an `AiChatSession` from a previously minimized session's persisted state (see
- * src/ui/workspace/aiSessionDirectory.ts), without any network calls — its Azure OpenAI file and
- * vector store are still alive because minimizing (unlike ending) never deleted them. `config` is
- * rebuilt fresh from the current environment rather than persisted, since the API key must never be
- * written to `localStorage`.
+ * Deletes everything the session left in Azure OpenAI: uploaded files and stored responses (they
+ * contain tenant data). The container expires on its own after 20 idle minutes. Best effort.
  */
-export function resumeSession(
-  id: string,
-  config: AzureOpenAiConfig,
-  resumable: {
-    doc: FileSearchDocument;
-    lastResponseId: string;
-    messages: ChatMessage[];
-    sanitizationStats: { pseudonymizedTokens: number; publicIpsReplaced: number };
-  },
-): AiChatSession {
-  return { id, config, ...resumable };
+export async function endSession(ctx: AiContext, session: AiChatSession): Promise<void> {
+  await Promise.allSettled([
+    ...session.files.map((f) => ctx.client.files.delete(f.id)),
+    ...session.responseIds.map((id) => ctx.client.responses.delete(id)),
+  ]);
 }
 
-/** Sends one more chat message in an existing session (see startAnalysisSession). `file_search`
- * stays enabled so this turn, too, only pulls in the chunks relevant to the new question. Pass
- * `images` (e.g. a screenshot pasted from the clipboard) to attach them to just this turn as vision
- * input — they are sent inline with the message, never uploaded to the vector store. */
-export async function sendChatMessage(
-  session: AiChatSession,
-  text: string,
-  options: CallOptions & { images?: ImageAttachment[] } = {},
-): Promise<AiChatSession> {
-  const res = await callAzureOpenAi(session.config, text, {
-    ...options,
-    previousResponseId: session.lastResponseId,
-    vectorStoreIds: [session.doc.vectorStoreId],
-  });
-  const userMessage: ChatMessage = {
-    role: "user",
-    text,
-    ...(options.images?.length ? { images: options.images.map((i) => i.dataUri) } : {}),
-  };
-  return {
-    ...session,
-    lastResponseId: res.id,
-    messages: [...session.messages, userMessage, { role: "assistant", text: res.text }],
-  };
-}
-
-/**
- * Ends the analysis: asks the model, within the same session, to condense a fresh `file_search` pass
- * plus the chat so far into one strictly-typed JSON report (Structured Outputs — `REPORT_JSON_SCHEMA`),
- * so the frontend gets a typed `AiReport` back that can be rendered straight to a PDF.
- */
-export async function generateReport(session: AiChatSession, options: CallOptions = {}): Promise<AiReport> {
-  const res = await callAzureOpenAi(session.config, REPORT_INSTRUCTIONS, {
-    ...options,
-    previousResponseId: session.lastResponseId,
-    vectorStoreIds: [session.doc.vectorStoreId],
-    jsonSchema: REPORT_JSON_SCHEMA,
-  });
-  return parseReport(res.text);
-}
-
-/** Deletes the uploaded file and vector store. Call once the user is done with the session (closes
- * the panel, or after downloading the report) — best effort, never throws. */
-export async function endSession(session: AiChatSession): Promise<void> {
-  await deleteFileSearchDocument(session.config, session.doc);
-}
-
-function parseReport(raw: string): AiReport {
+export function parseReport(raw: string): AiReport {
   let parsed: unknown;
   try {
     parsed = JSON.parse(extractJson(raw));
   } catch {
     return { summary: raw, findings: [], recommendations: [] };
   }
-  if (typeof parsed !== "object" || parsed === null) return { summary: raw, findings: [], recommendations: [] };
+  if (typeof parsed !== "object" || parsed === null)
+    return { summary: raw, findings: [], recommendations: [] };
   const p = parsed as Record<string, unknown>;
   return {
     summary: typeof p.summary === "string" ? p.summary : "",
-    findings: Array.isArray(p.findings) ? p.findings.filter(isFinding) : [],
-    recommendations: Array.isArray(p.recommendations) ? p.recommendations.filter((r) => typeof r === "string") : [],
+    findings: Array.isArray(p.findings)
+      ? p.findings
+          .filter(isFinding)
+          .map((f) => ({ ...f, affected: f.affected.filter((a) => typeof a === "string") }))
+      : [],
+    recommendations: Array.isArray(p.recommendations)
+      ? p.recommendations.filter((r): r is string => typeof r === "string")
+      : [],
   };
 }
 
@@ -249,7 +441,7 @@ function isFinding(value: unknown): value is AiFinding {
   );
 }
 
-/** Models sometimes wrap JSON in a ```json fence despite instructions; strip it if present. */
+/** Models sometimes wrap JSON in a ```json fence; strip it if present. */
 function extractJson(text: string): string {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
   return (fenced ? fenced[1] : text)!.trim();

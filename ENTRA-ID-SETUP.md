@@ -14,6 +14,8 @@ Die CLI braucht **keine** App-Registrierung, sie verwendet `DefaultAzureCredenti
 | Entra ID: API-Berechtigung (delegiert) | **Azure Resource Manager → `user_impersonation`** | Scope `https://management.azure.com/user_impersonation` | wie oben; Zustimmung siehe § 4 |
 | Entra ID: OIDC-Scopes | `openid`, `profile`, `offline_access` | fordert MSAL automatisch an | – |
 | **Azure RBAC** (entscheidet, *was* gelesen werden kann) | **`Reader`** auf Management Groups oder Subscriptions | eingebaute Rolle | Owner/User Access Administrator der Scopes |
+| Entra ID: API-Berechtigung (delegiert, nur für KI-Analyse) | **Azure Cognitive Services → `user_impersonation`** | Token-Scope `https://cognitiveservices.azure.com/.default` | wie oben; siehe § 8.1 |
+| Azure RBAC (nur für KI-Analyse) | **`Cognitive Services OpenAI User`** auf der Azure-OpenAI-Ressource | eingebaute Rolle | Owner/User Access Administrator der Ressource |
 | Azure RBAC (optional) | Management-Group-Hierarchie | `Reader` bzw. `Management Group Reader` auf der Root/MG | wie oben |
 
 Referenzwerte der Berechtigung (in jedem Tenant gleich):
@@ -148,6 +150,7 @@ Azure-Lighthouse-delegierte Subscriptions benötigen **keine** Zustimmung im Kun
 - Nur `https`-Redirect-URIs in Produktion; `localhost` nur für Entwicklung.
 - Hosting mit strikter **Content Security Policy**:
   `default-src 'self'; connect-src 'self' https://login.microsoftonline.com https://management.azure.com; frame-src https://login.microsoftonline.com; script-src 'self'; object-src 'none'; base-uri 'self'`
+  Mit KI-Analyse ergänzt der Build den Azure-OpenAI-Endpunkt automatisch in `connect-src` (`vite.config.ts`).
 
 ---
 
@@ -169,6 +172,27 @@ Token-Verhalten:
 - Token-Cache: `sessionStorage` (wird mit dem Tab geschlossen); die App persistiert, loggt oder exportiert keine Tokens.
 - Access Tokens für ARM gelten ca. 60–90 Minuten; SPA-Refresh-Tokens 24 Stunden. Danach ist eine erneute interaktive Anmeldung (Popup) nötig.
 
+### 8.1 KI-Analyse mit Azure OpenAI (optional)
+
+Die KI-Analyse ruft das interne Azure-OpenAI-Deployment ohne API-Schlüssel mit dem Konto des angemeldeten Benutzers auf. Das ist die von Microsoft empfohlene Variante. Einrichtung:
+
+1. **App-Registrierung → API permissions → Add a permission → APIs my organization uses → „Azure Cognitive Services“** → **Delegated → `user_impersonation`**. Danach Admin-Consent erteilen oder die Benutzerzustimmung zulassen (§ 4). Die Anwendung fordert den Scope `https://cognitiveservices.azure.com/.default` an. Die Azure v1 API akzeptiert auch `https://ai.azure.com/.default`, das lässt sich per `VITE_AZURE_OPENAI_SCOPE` einstellen.
+2. **Azure-OpenAI-Ressource → Access control (IAM):** Den Benutzern oder der Gruppe (z. B. `sg-network-audit-readers`) die Rolle **`Cognitive Services OpenAI User`** zuweisen. Die Rolle erlaubt Inferenz sowie Dateien und Antworten, aber keine Verwaltung der Ressource.
+3. `.env.local`:
+
+```bash
+VITE_AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
+VITE_AZURE_OPENAI_MODEL=<deployment>          # z. B. gpt-5-mini
+# optional: Token-Scope (Standard https://cognitiveservices.azure.com/.default)
+VITE_AZURE_OPENAI_SCOPE=
+# optional: minimal | low | medium | high (Standard für Reasoning-Modelle: low)
+VITE_AZURE_OPENAI_REASONING_EFFORT=
+# leer lassen: Entra ID. Nur als Rückfall ohne Anmeldung (landet im Bundle!):
+VITE_AZURE_OPENAI_API_KEY=
+```
+
+Die Anwendung fordert das Token beim ersten KI-Aufruf still an; fehlt die Zustimmung, erscheint einmalig ein Popup. Der Export wird **unverändert** übertragen, daher nur ein für diese Daten freigegebenes internes Deployment verwenden (ARCHITECTURE.md § 22, Risiko R21).
+
 ---
 
 ## 9. Fehlerbehebung
@@ -182,4 +206,7 @@ Token-Verhalten:
 | `AADSTS700016` application not found in directory | Single-Tenant-App, Login in fremdem Tenant; oder kein Service Principal im Ziel-Tenant | App auf Multitenant umstellen und Admin-Consent im Ziel-Tenant (§ 6) |
 | `AADSTS50105` user not assigned | „Assignment required“ aktiv, Benutzer nicht zugewiesen | Benutzer/Gruppe der Enterprise App zuweisen |
 | Login ok, aber keine Subscriptions | Keine RBAC-Rolle | `Reader` zuweisen (§ 5) |
+| KI-Analyse: `401`/`403` von Azure OpenAI | Rolle „Cognitive Services OpenAI User“ fehlt oder API-Berechtigung ohne Zustimmung | § 8.1 Schritt 1–2; nach Rollenzuweisung einige Minuten warten |
+| KI-Analyse: `404` | Deployment-Name falsch oder Endpunkt ohne v1-API | `VITE_AZURE_OPENAI_MODEL` = Deployment-Name, Endpunkt ohne Pfad angeben |
+| KI-Analyse im Build: „Failed to fetch“ | Build ohne `VITE_AZURE_OPENAI_ENDPOINT`, CSP blockiert den Endpunkt | Mit gesetztem Endpunkt neu bauen |
 | Popup wird blockiert | Browser-Popup-Blocker | Popups für die UI-URL erlauben; das Tool fällt auf Redirect zurück |

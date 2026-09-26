@@ -1,45 +1,48 @@
 import type { AiChatSession, ChatMessage } from "../../ai/analyze.js";
-import type { FileSearchDocument } from "../../ai/azureOpenAi.js";
 
 /**
- * Session directory: a browser-local (localStorage) history of KI-Analyse chat sessions.
+ * Session directory for the KI-Analyse.
  *
- * A session is either **minimized** (the user closed the window but chose to keep it running —
- * its temporary Azure OpenAI file/vector store is still alive, so the full chat state is persisted
- * here and the session can be resumed, even after a page reload) or **ended** (the user explicitly
- * ended it — its Azure OpenAI file/vector store has been deleted, so only a small metadata record
- * is kept for history; it can never be resumed since the data it would resume from no longer
- * exists). The Azure OpenAI API key is never persisted here — `config` is rebuilt from the
- * `VITE_AZURE_OPENAI_*` env vars on resume, not stored.
+ * - Metadata (time, title, message count, status) lives in `localStorage`, so past sessions stay
+ *   visible as history.
+ * - The resumable state of a minimized session (file/response ids and the chat without images)
+ *   contains tenant data and therefore lives in `sessionStorage` only: it survives a reload of the
+ *   tab, but is gone when the tab is closed. Its Azure OpenAI files then remain until they are
+ *   deleted in the resource (they are not reachable from another tab).
+ *
+ * Credentials are never stored here.
  */
 export interface AiSessionRecord {
   id: string;
   startedAt: string;
-  /** First user-visible line (e.g. the model's readiness message), truncated, for a recognizable label. */
   title: string;
   messageCount: number;
   status: "minimized" | "ended";
   endedAt?: string;
-  /** Present only while `status === "minimized"` — everything needed to resume the session, except
-   * the API key (see above). A minimized session keeps its Azure OpenAI vector store alive and
-   * therefore keeps incurring file_search storage/indexing cost until it is resumed and ended. */
-  resumable?: {
-    doc: FileSearchDocument;
-    lastResponseId: string;
-    messages: ChatMessage[];
-    sanitizationStats: { pseudonymizedTokens: number; publicIpsReplaced: number };
-  };
+  /** True while the resumable state is available in this tab. */
+  resumable?: boolean;
 }
 
+export type ResumableSession = Omit<AiChatSession, "id">;
+
 const STORAGE_KEY = "ai-session-directory";
+const RESUME_PREFIX = "ai-session-resume:";
 const MAX_RECORDS = 30;
+
+function storage(kind: "local" | "session"): Storage | undefined {
+  try {
+    return kind === "local" ? localStorage : sessionStorage;
+  } catch {
+    return undefined;
+  }
+}
 
 function readAll(): AiSessionRecord[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = storage("local")?.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
+    return Array.isArray(parsed) ? parsed.filter(isRecord).map(stripLegacy) : [];
   } catch {
     return [];
   }
@@ -47,7 +50,7 @@ function readAll(): AiSessionRecord[] {
 
 function writeAll(records: AiSessionRecord[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(records.slice(0, MAX_RECORDS)));
+    storage("local")?.setItem(STORAGE_KEY, JSON.stringify(records.slice(0, MAX_RECORDS)));
   } catch {
     // best effort: private window or full storage just means no history is kept
   }
@@ -65,68 +68,78 @@ function isRecord(value: unknown): value is AiSessionRecord {
   );
 }
 
+/** Older versions kept the whole chat in `localStorage`; drop it on read. */
+function stripLegacy(r: AiSessionRecord): AiSessionRecord {
+  const { id, startedAt, title, messageCount, status, endedAt } = r;
+  return { id, startedAt, title, messageCount, status, ...(endedAt ? { endedAt } : {}) };
+}
+
 export function listSessions(): AiSessionRecord[] {
-  return [...readAll()].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const s = storage("session");
+  return readAll()
+    .map((r) => ({ ...r, resumable: r.status === "minimized" && !!s?.getItem(RESUME_PREFIX + r.id) }))
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
-export function recordSessionStarted(id: string, title: string): void {
-  const records = readAll().filter((r) => r.id !== id);
-  records.unshift({
-    id,
-    startedAt: new Date().toISOString(),
-    title: title.slice(0, 140),
-    messageCount: 1,
-    status: "minimized",
-  });
-  writeAll(records);
+/** Title for the directory: the first question, else a neutral label. */
+function titleOf(messages: ChatMessage[]): string {
+  return (messages.find((m) => m.role === "user")?.text ?? "Neue Sitzung").slice(0, 140);
 }
 
-export function recordSessionMessage(id: string, messageCount: number): void {
-  const records = readAll();
-  const i = records.findIndex((r) => r.id === id);
-  if (i === -1) return;
-  records[i] = { ...records[i]!, messageCount };
-  writeAll(records);
-}
-
-/** Persists the full resumable state of a still-running session (called on "Minimieren" and kept
- * up to date on every message, so a page reload doesn't lose an in-progress minimized session). */
-export function saveResumableSession(session: AiChatSession): void {
+/** Records the session and keeps its resumable state for this tab (called after every turn). */
+export function saveSession(session: AiChatSession): void {
   const records = readAll();
   const i = records.findIndex((r) => r.id === session.id);
   const record: AiSessionRecord = {
     id: session.id,
     startedAt: records[i]?.startedAt ?? new Date().toISOString(),
-    title: (records[i]?.title || session.messages[0]?.text) ?? "Sitzung",
+    title: titleOf(session.messages),
     messageCount: session.messages.length,
     status: "minimized",
-    resumable: {
-      doc: session.doc,
-      lastResponseId: session.lastResponseId,
-      messages: session.messages,
-      sanitizationStats: session.sanitizationStats,
-    },
   };
   if (i === -1) records.unshift(record);
   else records[i] = record;
   writeAll(records);
+
+  const { id: _id, ...state } = session;
+  const withoutImages: ResumableSession = {
+    ...state,
+    messages: state.messages.map(({ images, ...m }) =>
+      images?.length ? { ...m, text: `${m.text}\n[${images.length} Bild(er)]` } : m,
+    ),
+  };
+  try {
+    storage("session")?.setItem(RESUME_PREFIX + session.id, JSON.stringify(withoutImages));
+  } catch {
+    // best effort
+  }
 }
 
-/** Marks a session ended (its Azure OpenAI resources are gone) and drops the resumable payload —
- * only the small metadata record remains, for history. */
+/** Resumable state of a minimized session in this tab, if any. */
+export function loadResumableSession(id: string): AiChatSession | undefined {
+  try {
+    const raw = storage("session")?.getItem(RESUME_PREFIX + id);
+    if (!raw) return undefined;
+    const state = JSON.parse(raw) as ResumableSession;
+    if (!Array.isArray(state.files) || !Array.isArray(state.messages)) return undefined;
+    return { id, ...state, responseIds: state.responseIds ?? [] };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Marks a session ended (its Azure OpenAI data is deleted) and drops its resumable state. */
 export function recordSessionEnded(id: string): void {
+  try {
+    storage("session")?.removeItem(RESUME_PREFIX + id);
+  } catch {
+    // best effort
+  }
   const records = readAll();
   const i = records.findIndex((r) => r.id === id);
   if (i === -1) return;
-  const { resumable: _resumable, ...rest } = records[i]!;
-  records[i] = { ...rest, status: "ended", endedAt: new Date().toISOString() };
+  records[i] = { ...records[i]!, status: "ended", endedAt: new Date().toISOString() };
   writeAll(records);
-}
-
-/** The persisted state needed to resume a minimized session, or undefined if `id` isn't resumable
- * (unknown, or already ended). */
-export function getResumableSession(id: string): AiSessionRecord["resumable"] | undefined {
-  return readAll().find((r) => r.id === id && r.status === "minimized")?.resumable;
 }
 
 export function clearSessionDirectory(): void {
