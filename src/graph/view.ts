@@ -66,6 +66,24 @@ export interface VisibleGraph {
 export const MAX_VISIBLE_NODES = 1500;
 /** Related nodes outside a focused subtree are shown at most at this level of detail. */
 const NEIGHBOR_MAX_LEVEL = 4;
+/**
+ * Path mode: resources attached to a path node are shown as context (security and routing
+ * configuration, addresses, the VM/NIC pair). NICs and VMs are not pulled in from subnets or VNets,
+ * which may hold hundreds of them.
+ */
+const PATH_CONTEXT_TYPES = new Set([
+  "nsg",
+  "routeTable",
+  "natGateway",
+  "publicIp",
+  "publicIpPrefix",
+  "firewallPolicy",
+  "wafPolicy",
+  "nic",
+  "vm",
+]);
+const PATH_CONTEXT_EDGES = new Set<EdgeType>(["attached", "securedBy", "natThrough", "policyOf"]);
+
 /** Organisational nodes are never pulled in as neighbours (they would only duplicate hierarchy). */
 const CONTAINER_ONLY_TYPES = new Set(["tenant", "subscription", "region"]);
 
@@ -207,10 +225,38 @@ export function computeVisibleGraph(index: GraphIndex, state: ViewState): Visibl
     for (const root of roots) if (byLevel(root) || state.expanded.has(root.id)) include(root, byLevel);
   }
 
-  // Path mode: path nodes and their ancestors are always visible.
+  // Path mode: path nodes, their attached resources (context) and all ancestors are always visible.
+  const pathContext = new Set<string>();
   if (state.pathIds) {
-    for (const id of state.pathIds) {
-      let current: string | undefined = index.byId.has(id) ? id : undefined;
+    const onPath = [...state.pathIds].filter((id) => index.byId.has(id));
+    const addContext = (id: string) => {
+      if (state.pathIds!.has(id) || !inSubscriptionFilter(index.byId.get(id)!, state.subscriptionIds)) return;
+      pathContext.add(id);
+    };
+    for (const id of onPath) {
+      const node = index.byId.get(id)!;
+      const bulk = node.type === "subnet" || node.type === "vnet";
+      // A VM's NICs are its children; their NSGs and public IPs belong to the VM's path too.
+      const sources = [id];
+      if (node.type === "vm") {
+        for (const c of index.children.get(id) ?? []) {
+          if (c.type !== "nic") continue;
+          addContext(c.id);
+          sources.push(c.id);
+        }
+      }
+      for (const src of sources) {
+        for (const e of index.edgesByNode.get(src) ?? []) {
+          if (!PATH_CONTEXT_EDGES.has(e.type)) continue;
+          const other = index.byId.get(e.source === src ? e.target : e.source);
+          if (!other || !PATH_CONTEXT_TYPES.has(other.type)) continue;
+          if (bulk && (other.type === "nic" || other.type === "vm")) continue;
+          addContext(other.id);
+        }
+      }
+    }
+    for (const id of [...onPath, ...pathContext]) {
+      let current: string | undefined = id;
       while (current) {
         visible.add(current);
         current = index.byId.get(current)?.parentId;
@@ -250,7 +296,7 @@ export function computeVisibleGraph(index: GraphIndex, state: ViewState): Visibl
   const filterActive = pathFilter || state.ipMode !== "all" || changeFilter;
   if (pathFilter) {
     for (const id of state.pathIds!) if (visible.has(id)) matches.add(id);
-    const keep = new Set(matches);
+    const keep = new Set([...matches, ...pathContext]);
     for (const id of [...keep]) {
       let parent = index.byId.get(id)?.parentId;
       while (parent && visible.has(parent)) {

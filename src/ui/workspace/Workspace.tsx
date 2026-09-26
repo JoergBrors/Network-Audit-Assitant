@@ -13,7 +13,6 @@ import { DefaultPathsView } from "./DefaultPathsView.js";
 import { buildRoutingContext } from "../../routing/context.js";
 import { analyzeDefaultPaths } from "../../routing/analysis.js";
 import { analyzeInbound } from "../../routing/inbound.js";
-import type { IpFamily } from "../../addressing/ip.js";
 import { downloadJson } from "./download.js";
 
 export interface WorkspaceComparison {
@@ -91,7 +90,7 @@ export function Workspace({
   const [showEdgeLabels, setShowEdgeLabels] = useState(false);
   const [center, setCenter] = useState<"graph" | "paths">("graph");
   const [pathSource, setPathSource] = useState<string | undefined>();
-  const [pathShown, setPathShown] = useState<{ family: IpFamily; ids: string[] } | undefined>();
+  const [pathShown, setPathShown] = useState<{ key: string; label: string; ids: string[] } | undefined>();
   const [pathDirection, setPathDirection] = useState<"outbound" | "inbound">("outbound");
   const routing = useMemo(() => buildRoutingContext(model.inventory), [model.inventory]);
   const defaultPaths = useMemo(
@@ -253,8 +252,7 @@ export function Workspace({
 
         {pathShown && (
           <div className="focus-bar small path-bar">
-            Pfad ({pathShown.family === "ipv4" ? "IPv4" : "IPv6"}) wird hervorgehoben – andere Elemente sind
-            ausgeblendet.
+            Pfad ({pathShown.label}) wird hervorgehoben – andere Elemente sind ausgeblendet.
             <button className="secondary small-button" onClick={() => setPathShown(undefined)}>
               Pfad ausblenden
             </button>
@@ -332,10 +330,10 @@ export function Workspace({
               setPathShown(undefined);
             }}
             onSelect={reveal}
-            shownFamily={pathShown?.family}
-            onShowPath={(family, ids) => {
+            shownKey={pathShown?.key}
+            onShowPath={(key, label, ids) => {
               setCenter("graph");
-              setPathShown((prev) => (prev?.family === family ? undefined : { family, ids }));
+              setPathShown((prev) => (prev?.key === key ? undefined : { key, label, ids }));
               setRevealId(ids[0]);
             }}
           />

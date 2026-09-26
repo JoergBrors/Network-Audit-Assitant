@@ -37,8 +37,9 @@ interface PathPanelProps {
   sourceName: string;
   onClose: () => void;
   onSelect: (id: string) => void;
-  onShowPath: (family: IpFamily, nodeIds: string[]) => void;
-  shownFamily: IpFamily | undefined;
+  /** Highlights a path in the graph; `key` identifies it (toggle), `label` names it in the banner. */
+  onShowPath: (key: string, label: string, nodeIds: string[]) => void;
+  shownKey: string | undefined;
 }
 
 /** Trace Network Path + Compare IPv4/IPv6 Path (Lastenheft §§ 45, 46, 53). */
@@ -49,7 +50,7 @@ export function PathPanel({
   onClose,
   onSelect,
   onShowPath,
-  shownFamily,
+  shownKey,
 }: PathPanelProps) {
   const [target, setTarget] = useState("internet");
   const [protocol, setProtocol] = useState<"Tcp" | "Udp" | "*">("Tcp");
@@ -67,6 +68,7 @@ export function PathPanel({
     () => compareFamilies(ctx, sourceId, query.destination, { protocol: query.protocol, port: query.port }),
     [ctx, sourceId, query],
   );
+  const subnetNicNsgs = useMemo(() => nicNsgsInSubnet(ctx, sourceId), [ctx, sourceId]);
   const targetValid =
     target.trim().toLowerCase() === "internet" || ipFamilyOf(target.trim().split("/")[0]) !== undefined;
 
@@ -81,6 +83,12 @@ export function PathPanel({
       <p className="small">
         Quelle: <strong>{sourceName}</strong>
       </p>
+      {subnetNicNsgs > 0 && (
+        <p className="gap-banner small">
+          Quelle ist ein Subnet: Die NSGs an {subnetNicNsgs === 1 ? "einer NIC" : `${subnetNicNsgs} NICs`}{" "}
+          darin werden hier nicht bewertet. Für die NIC-NSG eine VM oder NIC als Quelle wählen.
+        </p>
+      )}
       <form
         className="path-form"
         onSubmit={(e) => {
@@ -141,12 +149,20 @@ export function PathPanel({
             family={family}
             result={comparison[family]}
             onSelect={onSelect}
-            shown={shownFamily === family}
-            onShow={() => onShowPath(family, pathNodeIds(comparison[family]))}
+            shown={shownKey === family}
+            onShow={() =>
+              onShowPath(family, family === "ipv4" ? "IPv4" : "IPv6", pathNodeIds(comparison[family]))
+            }
           />
         ))}
       </div>
-      <InboundSection ctx={ctx} targetId={sourceId} onSelect={onSelect} />
+      <InboundSection
+        ctx={ctx}
+        targetId={sourceId}
+        onSelect={onSelect}
+        onShowPath={onShowPath}
+        shownKey={shownKey}
+      />
       <p className="muted small">
         Konfigurationsbasierte Analyse: per BGP gelernte Routen, NVA-Verhalten und FQDN-Regeln sind nicht
         einsehbar – die Konfidenz je Schritt zeigt, wie belastbar eine Aussage ist.
@@ -155,7 +171,13 @@ export function PathPanel({
   );
 }
 
-export function pathNodeIds(result: PathResult): string[] {
+/** NICs in a subnet source that carry their own NSG (not evaluated when the subnet is the source). */
+export function nicNsgsInSubnet(ctx: RoutingContext, sourceId: string): number {
+  if (!ctx.subnets.has(sourceId)) return 0;
+  return ctx.inv.networkInterfaces.filter((n) => n.nsgId && n.subnetIds.includes(sourceId)).length;
+}
+
+export function pathNodeIds(result: Pick<PathResult, "hops">): string[] {
   const ids: string[] = [];
   for (const h of result.hops) if (h.nodeId && ids.at(-1) !== h.nodeId) ids.push(h.nodeId);
   return ids;
@@ -271,10 +293,14 @@ function InboundSection({
   ctx,
   targetId,
   onSelect,
+  onShowPath,
+  shownKey,
 }: {
   ctx: RoutingContext;
   targetId: string;
   onSelect: (id: string) => void;
+  onShowPath: PathPanelProps["onShowPath"];
+  shownKey: string | undefined;
 }) {
   const exposures = useMemo(() => analyzeInbound(ctx, { targetId }), [ctx, targetId]);
   return (
@@ -300,6 +326,18 @@ function InboundSection({
               </span>
               <div className="small">{e.summary}</div>
             </summary>
+            <button
+              className={shownKey === e.id ? "small-button" : "secondary small-button"}
+              onClick={() =>
+                onShowPath(
+                  e.id,
+                  `eingehend ${e.family === "ipv4" ? "IPv4" : "IPv6"} → ${e.targetName}`,
+                  pathNodeIds(e),
+                )
+              }
+            >
+              {shownKey === e.id ? "wird im Graph gezeigt" : "Im Graph zeigen"}
+            </button>
             <HopList hops={e.hops} onSelect={onSelect} />
           </details>
         ))

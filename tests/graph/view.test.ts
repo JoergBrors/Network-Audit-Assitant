@@ -98,6 +98,25 @@ describe("computeVisibleGraph", () => {
     expect(v.nodes.find((n) => n.node.id === lc(F.HUB))?.neighbor).toBe(true);
   });
 
+  it("path mode shows resources attached to path nodes as context", () => {
+    const v = view({ pathIds: new Set([lc(F.VM), lc(F.SNET_APP)]) });
+    const byId = new Map(v.nodes.map((n) => [n.node.id, n]));
+    // Subnet: its NSG and route table; VM: its NIC and the NIC's public IP.
+    for (const id of [F.NSG_SPOKE, F.RT_SPOKE, F.NIC_VM, F.PIP_VM]) {
+      expect(byId.get(lc(id))?.emphasis).toBe("context");
+    }
+    expect(byId.get(lc(F.VM))?.emphasis).toBe("match");
+    // No unrelated resources (other VNets, the hub firewall).
+    expect(ids(v)).not.toContain(lc(F.HUB));
+    expect(ids(v)).not.toContain(lc(F.FW));
+  });
+
+  it("path mode does not pull all NICs of a subnet on the path", () => {
+    const v = view({ pathIds: new Set([lc(F.SNET_APP)]) });
+    expect(ids(v)).not.toContain(lc(F.NIC_VM));
+    expect(ids(v)).not.toContain(lc(F.VM));
+  });
+
   it("filters by subscription", () => {
     const v = view({ level: 2, subscriptionIds: new Set([F.SUB_APP]) });
     expect(ids(v)).toContain(lc(F.SPOKE));
