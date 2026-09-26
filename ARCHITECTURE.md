@@ -712,14 +712,14 @@ Jeder JSON-Export ist ein Snapshot (`schemaVersion`, `snapshotMetadata`, vollst�
 
 ### 17.1 Sanitization
 
-**[teilweise]** `src/export/sanitize.ts` (`sanitizeExport`), UI-Einstieg über den Button „KI-Analyse“ (§ 22). CLI-Flag `--sanitize`/`--sanitize-key` noch offen.
+**[teilweise]** `src/export/sanitize.ts` (`sanitizeExport`) für Exporte an Dritte. Die KI-Analyse (§ 22) nutzt ihn nicht mehr (internes Deployment). UI-Einstieg und CLI-Flag `--sanitize`/`--sanitize-key` sind noch offen.
 
 - Deterministische Pseudonyme via HMAC-SHA-256 mit einem vom Aufrufer übergebenen Schlüssel (kein Default, kein Speichern des Schlüssels). Gleicher Schlüssel ⇒ vergleichbare sanitisierte Exporte (Drift-Vergleich auf sanitisierten Daten bleibt möglich); anderer Schlüssel ⇒ andere Pseudonyme, nicht korrelierbar.
 - Subscription-/Resource-Group-/Tenant-GUIDs → `guid-<hash8>` bzw. `sub-<hash8>`/`rg-<hash8>`; jedes Namenssegment einer ARM-Resource-ID → `res-<hash8>`. Wirkt sowohl auf einzelne ID-Felder als auch auf zusammengesetzte Strings (Graph-Kanten-IDs der Form `<typ>:<sourceId>-><targetId>#<qualifier>`) und auf freitextliche Felder (`name`, `reason`, `summary`, `firstHop`, …) über einen zweiten Whole-Word-Ersetzungsdurchlauf, damit derselbe Name nicht über ein Nebenfeld wieder auftaucht.
 - Öffentliche IPv4/IPv6-Adressen → deterministische Abbildung in RFC-5737/RFC-3849-Dokumentationsbereiche (`198.51.x.x`, `2001:db8:...`); Familie bleibt erhalten. Private Adressen (RFC1918, ULA, Link-Local) bleiben **unverändert**, da sie für die IPv6-Leck-Analyse (z. B. „welches private Subnet hat trotzdem eine öffentliche Route“) strukturell relevant sind und keine Tenant-Identität preisgeben.
 - Azure-Pflichtnamen (`GatewaySubnet`, `AzureFirewallSubnet`, `AzureFirewallManagementSubnet`, `AzureBastionSubnet`, `RouteServerSubnet`) bleiben als Literal erhalten – sie sind Plattformvorgaben, keine Tenant-Information.
 - Felder, deren Schlüsselname nach Secret aussieht (`*key*`, `*secret*`, `*password*`, `*token*`, `*credential*`, `connectionString`, `sas`, `sharedKey`), werden unabhängig vom Wert durch `[REMOVED]` ersetzt – zusätzlich zur Secret-Blocklist der Normalisierung (zweite Verteidigungslinie).
-- Struktur, Beziehungen (Graph-Kanten), Präfixlängen, Ports, Protokolle, NSG-/Routing-/Firewall-Entscheidungen und Zählwerte bleiben unverändert – notwendig, damit eine externe Analyse (Mensch oder KI, § 22) IPv6-Lecks und Architektur-Lücken weiterhin erkennen kann.
+- Struktur, Beziehungen (Graph-Kanten), Präfixlängen, Ports, Protokolle, NSG-/Routing-/Firewall-Entscheidungen und Zählwerte bleiben unverändert – notwendig, damit eine externe Analyse IPv6-Lecks und Architektur-Lücken weiterhin erkennen kann.
 - Getestet (`tests/export/sanitize.test.ts`): Determinismus, Schlüsselwechsel ändert Pseudonyme, keine reale Subscription-/Resource-/Public-IP-Leckage (inkl. zusammengesetzter Graph-Kanten-IDs und Freitextfelder), Plattform-Subnetznamen bleiben erhalten, strukturelle Felder bleiben identisch.
 
 ---
@@ -810,62 +810,65 @@ Felder je Eintrag: `ts`, `level`, `event`, plus event-spezifische Zahlen (`durat
 | R17 | ELK in einem eigenen Web Worker beantwortet Anfragen nicht (registriert sich selbst als Dispatcher). | Layout hängt endlos. | **Eingetreten und behoben:** `elk-api` + `elk-worker.min.js`; Regressionstest simuliert den Worker-Scope; 60-s-Timeout. |
 | R18 | Größe des Exports (realer Tenant ~9 MB) für KI-Uploads. | Kontextgrenzen von KI-Werkzeugen. | Graph bereits kompakt (ohne `contains`-Kanten und Routen-Knoten); geplant: kompakte KI-Variante ohne Detailtabellen (Phase 14). |
 | R19 | Build-Größe des UI-Bundles (~900 kB, ELK-Worker 1,6 MB). | Ladezeit beim ersten Aufruf. | Code-Splitting (Lazy-Load der Topologie) in Phase 7-Restpunkten. |
-| R20 | Azure-OpenAI-API-Key liegt im gebauten Browser-Bundle (`VITE_AZURE_OPENAI_API_KEY`), da die SPA keinen Server hat. | Wer das Bundle einsehen kann (z. B. Browser-DevTools), sieht den Key. | Nur ein kostenlimitiertes, isoliertes Azure-OpenAI-Deployment verwenden (nicht denselben Key wie produktive Workloads); Key regelmäßig rotieren; Feature ist optional (§ 22) und standardmäßig ohne Konfiguration inaktiv; **nicht** für produktiven Mehrbenutzerbetrieb ohne eigenes Backend/Proxy geeignet. |
-| R21 | Der KI-Provider (Azure OpenAI) sieht den sanitisierten Export, auch wenn reale Namen/IDs/Public-IPs pseudonymisiert sind. | Restrisiko: Traffic-Muster, Ressourcenzahl, Regionen, offene Ports könnten in seltenen Fällen eine Re-Identifikation über Kontextwissen erlauben (kein rein technisches Datenschutzproblem). | Nutzung ist ausdrücklich optional (Button, keine automatische Übertragung); Empfehlung: bei hoher Sensibilität nur mit einem privaten/dedizierten Azure-OpenAI-Deployment ohne Data-Retention-Zustimmung für Trainingszwecke arbeiten (Azure OpenAI verarbeitet Kundendaten laut Microsoft standardmäßig nicht für Modelltraining, siehe Microsoft-Datenschutzdokumentation). |
-| R22 | Der Sanitizer-Schlüssel wird zur Bequemlichkeit in `localStorage` gemerkt (§ 22.1) statt bei jeder Sitzung neu eingegeben zu werden müssen. | Wer physischen/Skript-Zugriff auf den Browser-Profilspeicher hat, kann denselben Schlüssel für weitere sanitisierte Exporte wiederverwenden (Korrelation über mehrere Sitzungen hinweg – der Schlüssel selbst ist aber kein Azure-Geheimnis und ohne den zugehörigen realen Export wertlos). | Feld ist `type="password"`, nichts wird geloggt; Nutzer, die dieses Risiko nicht eingehen wollen, können den Browser im privaten Modus verwenden oder den Schlüssel nach der Sitzung manuell aus den Website-Daten löschen. |
-| R23 | Eine „minimierte“ (fortsetzbare) Sitzung lässt ihren Azure-OpenAI-Vector-Store absichtlich am Leben, bis der Nutzer sie explizit beendet. | Vergisst der Nutzer, eine minimierte Sitzung zu beenden, laufen `file_search`-Speicher-/Indizierungskosten unbegrenzt weiter. | Sitzungsverzeichnis kennzeichnet fortsetzbare Sitzungen deutlich und weist auf die laufenden Kosten hin; der Nutzer muss eine Sitzung aktiv beenden (nicht nur schließen), um sie zu stoppen. |
+| R20 | Nur im Rückfallbetrieb mit API-Schlüssel (`VITE_AZURE_OPENAI_API_KEY`) liegt der Schlüssel im gebauten Browser-Bundle. | Wer das Bundle einsehen kann, sieht den Schlüssel. | Standard ist Entra ID ohne Schlüssel (Token des angemeldeten Benutzers, nur für Azure AI, RBAC „Cognitive Services OpenAI User“). Einen Schlüssel nur für ein isoliertes, kostenlimitiertes Deployment verwenden und regelmäßig rotieren. |
+| R21 | Die KI-Analyse überträgt den **nicht anonymisierten** Export (Namen, IDs, öffentliche IPs, Regeln) an Azure OpenAI; Antworten werden bis zum Sitzungsende gespeichert. | Tenant-Daten liegen während der Sitzung in der Azure-OpenAI-Ressource. | Nur ein internes, für diese Daten freigegebenes Deployment verwenden (Azure OpenAI nutzt Kundendaten nicht für Modelltraining). Zugriff per Entra ID und RBAC. Beim Schließen der Sitzung werden Dateien und gespeicherte Antworten gelöscht. Der Chat liegt im Browser nur in `sessionStorage`, das PDF ist als vertraulich gekennzeichnet. |
 
 ---
 
 ## 22. KI-Analyse (Azure OpenAI)
 
-**[umgesetzt]** `src/ai/azureOpenAi.ts` (HTTP-Client inkl. Datei-/Vector-Store-Endpunkte und Bild-Input), `src/ai/analyze.ts` (Chat-Session auf `file_search`-Basis + Report), `src/export/aiReportPdf.ts` (PDF-Rendering), `src/ui/workspace/FloatingOverlay.tsx` (verschieb-/größenveränderbares Fenster), `src/ui/workspace/aiSessionDirectory.ts` (lokales Sitzungsverzeichnis), UI-Panel `src/ui/workspace/AiAnalysisPanel.tsx` (Chat-Fenster mit Ladeanzeigen, Bildanhängen, Sitzungsverzeichnis), Button „KI-Analyse“ in `App.tsx`.
+**[umgesetzt]** `src/ai/azureOpenAi.ts` (Client auf dem offiziellen `openai`-SDK, Azure v1 API, Entra-ID-Authentifizierung), `src/ai/analyze.ts` (Chat-Session mit Code Interpreter, Streaming, Report), `src/export/aiReportPdf.ts` (PDF), `src/ui/workspace/AiAnalysisPanel.tsx` (Chat-Fenster), `src/ui/workspace/ChatMarkdown.tsx` (sicheres Markdown-Rendering der Antworten), `src/ui/workspace/aiSessionDirectory.ts` (Sitzungsverzeichnis), `src/ui/workspace/FloatingOverlay.tsx` (Fenster), Button „KI-Analyse“ in `App.tsx`.
 
-**Historie:** Ein erster Ansatz schickte den kompletten sanitisierten Export in einem Aufruf (überschritt das Token-Rate-Limit, `HTTP 429 rate_limit_exceeded`, real mit `gpt-5-mini`/`germanywestcentral`). Ein zweiter teilte ihn in viele Einzelaufrufe (ein Aufruf je VNet: bei ~80 VNets spürbar langsam) oder chattete direkt über den vollen Export als erste Nachricht (überschritt das Limit weiterhin, da der komplette Export weiterhin in einem Request steckte). Die aktuelle Lösung: **eine Chat-Session, deren Kontext über `file_search` gegen einen temporären Vector Store aufgelöst wird** – der Export zählt dadurch nicht in voller Länge gegen das Token-Budget jedes einzelnen Aufrufs, weil das Modell pro Anfrage nur die relevanten Ausschnitte abruft.
+**Grundsatz:** Die KI ist ein **internes** Azure-OpenAI-Deployment. Der Export wird deshalb **unverändert** übertragen (keine Pseudonymisierung): Antworten und Report nennen reale Ressourcennamen und sind direkt verwendbar. Die Sanitization (§ 17.1) bleibt als eigene Funktion für Exporte an Dritte bestehen, wird von der KI-Analyse aber nicht mehr verwendet.
 
 ### 22.1 Ablauf
 
-1. Nutzer klickt „KI-Analyse“ (nur aktiv, wenn ein Modell geladen ist) und gibt einen **Sanitizer-Schlüssel** ein (frei wählbar; wird zur Bequemlichkeit in `localStorage` gemerkt – Schlüssel `ai-sanitizer-key` – und beim nächsten Öffnen vorausgefüllt, damit er nicht bei jeder Sitzung neu eingegeben werden muss). Der Schlüssel ist kein Azure-Geheimnis, sondern ein selbst gewählter Wert, der nur lokal die Pseudonymisierung deterministisch macht (§ 17.1); er wird nie an Azure OpenAI oder sonst irgendwohin gesendet, nicht geloggt.
-2. **Sitzung starten** (`startAnalysisSession`, mit sichtbarem Fortschritt je Phase):
-   - *Anonymisieren*: `buildAssessmentExport()` + `sanitizeExport()` (§ 17.1). **Ab hier verlässt keine reale Tenant-Kennung mehr den Browser.**
-   - *Hochladen*: `uploadFileSearchDocument()` formatiert den (an sich einzeiligen) `JSON.stringify`-Export vor dem Upload auf mehrzeiliges, eingerücktes JSON um – eine sehr lange einzelne Zeile ist für Azures Text-Extraktions-Pipeline anfälliger für Parserfehler als dieselbe Datei mehrzeilig – und lädt sie als Datei hoch (`POST /openai/v1/files`, `purpose=assistants`, MIME `text/plain`). Danach wird ein **temporärer** Vector Store angelegt (`POST /openai/v1/vector_stores`).
-   - *Indizieren*: Die Datei wird an den Vector Store angehängt (`POST /openai/v1/vector_stores/{id}/files`) und der Ingestion-Status gepollt (`GET .../files/{id}`, Standard alle 1 s, Timeout 60 s). Schlägt die Verarbeitung mit `last_error.code = "server_error"` fehl (Azures generischer, in der Praxis meist transienter Fehler „An internal error occurred“), wird die Datei bis zu zweimal erneut angehängt und die Ingestion neu abgewartet, bevor der Fehler nach oben gereicht wird (`maxIngestAttempts`, Standard 3 Versuche insgesamt). Danach folgt ein erster kleiner Chat-Aufruf mit aktiviertem `file_search`-Tool (`tools: [{type: "file_search", vector_store_ids: [...]}]`), der die Sitzung eröffnet.
-3. **Chatten** (`sendChatMessage`): Jede Nutzerfrage hängt über `previous_response_id` an die Sitzung an und behält `file_search` aktiviert – das Modell durchsucht bei Bedarf gezielt den Export, statt ihn erneut im Volltext zu erhalten. Kurze, günstige Folgeaufrufe unabhängig von der Tenant-Größe.
-4. **Report erzeugen** (`generateReport`): Ein Aufruf mit `file_search` **und** Structured Outputs (`text.format = {type: "json_schema", strict: true}`, Schema `network_audit_report`: `summary`, `findings[]`, `recommendations[]`) fasst eine gezielte Suche nach IPv6-Lecks/Architektur-Gaps plus den bisherigen Chat zusammen. `generateReport()` bekommt so ohne Freitext-Heuristiken ein typisiertes `AiReport`-Objekt zurück.
-5. `AiReport` wird clientseitig zu **PDF** gerendert (`aiReportPdf.ts`, `pdf-lib`, keine Serverkomponente) und ist zusätzlich als JSON herunterladbar.
-6. **Sitzungsende**: Schließen des Panels (oder Unmount) löscht Datei und Vector Store (`endSession` → `deleteFileSearchDocument`, best effort, `finally`/Cleanup-Effekt) – der temporäre Speicher bleibt nie länger bestehen als die Sitzung.
-7. Bei `HTTP 429` oder `5xx` wiederholt jeder Aufruf (inkl. Upload/Vector-Store-Erstellung/Polling) automatisch mit exponentiellem Backoff (Basis 2 s, Obergrenze 30 s, plus Jitter) bzw. respektiert einen vom Server gesendeten `Retry-After`-Header (Standard 4 Wiederholungen).
+1. **Anmeldung:** Bevorzugt ohne Schlüssel mit Microsoft Entra ID. Das MSAL-Konto des angemeldeten Benutzers liefert ein Token für `https://cognitiveservices.azure.com/.default` (per `VITE_AZURE_OPENAI_SCOPE` änderbar), das das SDK als Token-Provider nutzt und bei Bedarf erneuert (Einrichtung: ENTRA-ID-SETUP.md § 8.1). Ein API-Schlüssel (`VITE_AZURE_OPENAI_API_KEY`) ist nur ein Rückfall für den Offline-Betrieb ohne Anmeldung.
+2. **Sitzung starten** (`startAnalysisSession`): Der Export wird **einmal** als JSON-Datei hochgeladen (`files.create`, `purpose=assistants`). Es gibt keinen Modellaufruf zum Start und keine Indizierung, die Sitzung ist direkt nach dem Upload bereit.
+3. **Chatten** (`sendChatMessage`): Jede Frage ist ein Responses-API-Aufruf mit dem Tool **Code Interpreter** (`container: {type: "auto", file_ids: [...]}`). Das Modell lädt den Export in einer Python-Sandbox und wertet ihn gezielt aus. Das ist präziser als eine Volltextsuche über JSON-Ausschnitte, weil Beziehungen (Subnet → NSG → Regeln → Routen) im Zusammenhang geprüft werden. Weitere Eigenschaften:
+   - **Streaming** (`stream: true`): Die Antwort erscheint Token für Token. Laufende Python-Auswertungen werden als Status angezeigt.
+   - **Verkettung** über `previous_response_id`: Jede Folgefrage sendet nur die neue Nachricht. `truncation: "auto"` verhindert Kontextüberlauf in langen Sitzungen.
+   - **Prompt-Caching:** feste `instructions` plus `prompt_cache_key`.
+   - **Übersicht nur in der ersten Frage:** Anzahl der Einträge je Abschnitt, damit das Modell den Export nicht erst erkunden muss.
+   - **Reasoning-Aufwand:** `low` für Reasoning-Modelle (gpt-5*, o*), konfigurierbar. Der Report nutzt eine Stufe mehr.
+   - **Automatische Wiederholung** bei 429/5xx durch das SDK (inkl. `Retry-After`). Abbrechen ist jederzeit möglich (`AbortSignal`).
+4. **Dateien in der Sitzung:**
+   - Angehängte Dateien (CSV, PDF, JSON, …) werden in den Container hochgeladen und bleiben für die gesamte Sitzung verfügbar.
+   - Bilder (einfügen, ziehen oder anhängen) gehen als `input_image` direkt an die jeweilige Frage.
+   - Dateien, die das Modell erzeugt, z. B. CSV oder Diagramme, zitiert es als `container_file_citation`. Sie erscheinen als Download-Buttons (`containers.files.content`).
+5. **Report erzeugen** (`generateReport`): Ein Aufruf mit Code Interpreter **und** Structured Outputs (`text.format = json_schema`, `strict: true`, Schema `network_audit_report`) liefert ein typisiertes `AiReport` mit `summary`, `findings[]` und `recommendations[]`.
+6. **PDF** (`aiReportPdf.ts`, `pdf-lib`, rein im Browser):
+   - Inhalt: Kopf mit Modell, Datenbasis und Vertraulichkeitshinweis, Findings nach Schweregrad sortiert, nummerierte Empfehlungen, Chatverlauf als Anhang und Seitenzahlen.
+   - Textaufbereitung: Zeichen außerhalb von WinAnsi (Pfeile, Häkchen, Emoji) werden ersetzt statt einen Fehler auszulösen. Markdown wird entfernt, lange Resource-IDs werden umbrochen.
+7. **Sitzungsende** (✕): `endSession` löscht alle hochgeladenen Dateien **und** die gespeicherten Antworten (`responses.delete`), denn sie enthalten Tenant-Daten. Der Container läuft nach 20 Minuten Leerlauf von selbst ab.
 
 ### 22.2 Ladeanzeige
 
-Damit eine Wartezeit nachvollziehbar bleibt, zeigt die UI zwei gestaffelte Indikatoren:
+- **Kurz:** Ein rotierendes Netzwerk-Schild mit Status, z. B. „Denkt nach …“ oder „Werte die Daten mit Python aus …“. Sobald Text eintrifft, wird die Antwort live angezeigt.
+- **Lang (≥ 4 s ohne neuen Status):** Zusätzlich hüpfen fünf Punkte in Regenbogenfarben, damit sichtbar bleibt, dass die Anwendung noch arbeitet.
 
-- **Kurz** (Normalfall): ein rotierendes Netzwerk-Schild-Icon mit Klartext-Status (`sanitizing`/`uploading`/`indexing`/„Durchsuche den Export …“/„Erzeuge Report …“ bzw. bei einem Retry „Rate-Limit erreicht (HTTP 429) – warte X s, dann Versuch N …“).
-- **Lang** (≥ 4 s, typischerweise ein Rate-Limit-Backoff): zusätzlich fünf Punkte in Regenbogenfarben, die von der Mitte nach außen abwechselnd hoch und runter „hüpfen“ (`ai-rainbow-dots`) – ein zweites, auffälligeres Signal, dass die Anwendung weiterarbeitet statt hängengeblieben zu sein.
+### 22.3 Sitzungsverzeichnis und Fenster
 
-### 22.3 Warum das schneller/günstiger ist als die vorherigen Ansätze
+- **Metadaten** (Zeitpunkt, erste Frage als Titel, Anzahl der Nachrichten, Status) liegen in `localStorage` (`ai-session-directory`).
+- **Minimieren** hält die Sitzung fort. Ihr Zustand (Datei- und Antwort-IDs, Chat ohne Bilder) liegt nur in `sessionStorage` des Tabs, übersteht also ein Neuladen, aber nicht das Schließen des Tabs. Chatinhalte landen nie dauerhaft im Browser.
+- **Einträge älterer Versionen** mit Chatinhalt in `localStorage` werden beim Lesen bereinigt.
+- **Das Fenster** (`FloatingOverlay`) lässt sich frei verschieben und in der Größe ändern. Position und Größe liegen in `localStorage`.
 
-- Kein Request trägt mehr den kompletten Export im Prompt – `file_search` löst pro Anfrage nur die relevanten Chunks auf, wodurch die Tenant-Größe nicht mehr direkt das Token-Budget jedes einzelnen Aufrufs bestimmt.
-- Der Export wird **genau einmal** hochgeladen (Sitzungsstart), nicht einmal pro VNet und nicht komplett in jeder Chat-Nachricht. Folgefragen sind kurze Texte.
-- Eine zusätzlich identifizierte Ursache für lange Wartezeiten lag nicht im Modellaufruf, sondern im **Sanitizer**: `sanitizeExport()` importierte den HMAC-Schlüssel früher pro pseudonymisiertem String neu über `crypto.subtle.importKey` (mehrere tausend Aufrufe bei einem großen Export). Der Schlüssel wird jetzt **einmal pro Sanitize-Lauf** importiert und wiederverwendet (`Pseudonymizer.create()`), das Ergebnis ist unverändert (siehe `tests/export/sanitize.test.ts`).
+### 22.4 Konfiguration
 
-### 22.4 Fenster, Bildanhänge, Sitzungsverzeichnis
+`.env.local` (siehe `.env.example`):
+- `VITE_AZURE_OPENAI_ENDPOINT` und `VITE_AZURE_OPENAI_MODEL` (Deployment) sind Pflicht.
+- `VITE_AZURE_OPENAI_REASONING_EFFORT` und `VITE_AZURE_OPENAI_SCOPE` sind optional.
+- `VITE_AZURE_OPENAI_API_KEY` ist nur ein Rückfall.
 
-- **Fenster** (`src/ui/workspace/FloatingOverlay.tsx`): Das Panel ist kein fester Seitenbereich mehr, sondern ein frei positionierbares Overlay – Titelleiste zum Verschieben (Pointer-Events, kein natives Drag'n'Drop), drei Resize-Griffe (rechts, unten, Ecke unten rechts, Mindestgröße 340×320 px). Position und Größe werden in `localStorage` (`ai-overlay-rect`) gemerkt und beim nächsten Öffnen wiederhergestellt; bei einer Fenstergrößenänderung wird die Position in den sichtbaren Bereich zurückgeklemmt.
-- **Bildanhänge**: Ein aus der Zwischenablage eingefügtes Bild (`onPaste` im Eingabefeld) wird als Base64-Data-URI gelesen und der **nächsten Chat-Nachricht** als `input_image`-Inhalt beigefügt (`callAzureOpenAi({images: [...]})` → `input` wird zu einem strukturierten `[{role: "user", content: [{type: "input_text", ...}, {type: "input_image", ...}]}]`-Array statt eines reinen Strings). Das Bild landet **nicht** im Vector Store – `file_search` indiziert nur textbasierte Dokumente (§ 22.2), ein Bild ist visueller Kontext für genau diesen einen Turn, kein durchsuchbares Dokument. Mehrere Bilder können vor dem Senden gesammelt und einzeln wieder entfernt werden.
-- **Sitzungsverzeichnis & Minimieren/Fortsetzen** (`src/ui/workspace/aiSessionDirectory.ts`): Ein Eintrag ist entweder **`minimized`** (Fenster geschlossen, Azure-OpenAI-Datei/Vector-Store bleiben absichtlich am Leben, volle Sitzung inkl. Chatverlauf in `localStorage` gesichert – auch über einen Seiten-Reload hinweg fortsetzbar) oder **`ended`** (Nutzer hat die Sitzung explizit beendet, Datei/Vector-Store sind gelöscht, nur Metadaten bleiben als Historie zurück, nicht reaktivierbar). Der Fenster-Titelleiste-Button „Minimieren“ ruft `saveResumableSession()` auf (persistiert `doc`, `lastResponseId`, `messages`, `sanitizationStats` – **nie** den Azure-OpenAI-API-Key, der beim Fortsetzen frisch aus `VITE_AZURE_OPENAI_*` neu aufgebaut wird, siehe `resumeSession()` in `src/ai/analyze.ts`) und schließt das Fenster, ohne den temporären Speicher zu löschen; der X-Button in der Titelleiste beendet dagegen wie zuvor sofort (`endSession` + `recordSessionEnded`). Ein Klick auf einen fortsetzbaren Eintrag im Sitzungsverzeichnis ruft `resumeSession()` auf (keine Netzwerkaufrufe, reine Rekonstruktion) und lädt den kompletten Chatverlauf zurück in die UI. Da ein `minimized` Vector Store weiterhin `file_search`-Kosten verursacht, weist das Sitzungsverzeichnis explizit darauf hin.
+Der Produktions-Build nimmt den Endpunkt automatisch in `connect-src` der Content Security Policy auf (`vite.config.ts`); ohne Endpunkt bleibt die CSP unverändert strikt.
 
-### 22.5 Konfiguration
+### 22.5 Grenzen
 
-`.env.local` (siehe `.env.example`): `VITE_AZURE_OPENAI_ENDPOINT`, `VITE_AZURE_OPENAI_API_KEY`, `VITE_AZURE_OPENAI_MODEL`. Ohne diese drei Werte bleibt der Button inaktiv mit Hinweistext; es gibt keinen Fallback-Provider und keine automatische Aktivierung.
+- Modellantworten sind nicht reproduzierbar und tragen keine `Confidence`/`Evidence`-Struktur wie die deterministische Pfad- und Sicherheitsanalyse (§ 12–14). Die KI ergänzt diese Analyse, sie ersetzt sie nicht.
+- Code Interpreter wird zusätzlich zu den Tokens pro Container-Sitzung abgerechnet (Mindestdauer 5 Minuten, 20 Minuten Leerlauf-Timeout).
+- Mit Entra ID braucht der Benutzer die Rolle „Cognitive Services OpenAI User“ auf der Ressource, und die App-Registrierung braucht die API-Berechtigung für Azure AI (ENTRA-ID-SETUP.md § 8.1).
+- Der API-Schlüssel-Rückfall legt den Schlüssel ins Browser-Bundle (R20).
+- Minimierte Sitzungen, deren Tab geschlossen wurde, lassen ihre Dateien in der Azure-OpenAI-Ressource zurück, bis sie dort gelöscht werden.
+- `pdf-lib` und `openai` vergrößern das Browser-Bundle.
 
-### 22.6 Grenzen
-
-- Der API-Key liegt im Client-Bundle (R20) – siehe dortige Gegenmaßnahmen.
-- Die Analyse ist eine Ergänzung, kein Ersatz für die deterministische Pfad-/Sicherheitsanalyse (§ 12–14): Modellantworten sind nicht reproduzierbar und tragen keine `Confidence`/`Evidence`-Struktur wie der Rest des Tools.
-- Es findet keine automatische, wiederkehrende Analyse statt (kein Scheduler, kein Hintergrundjob) – jede Sitzung ist eine bewusste Nutzerinteraktion.
-- `file_search` verursacht in Azure OpenAI zusätzliche Kosten (Speicherung/Indizierung des Vector Store) neben den Token-Kosten der Aufrufe selbst; die Sitzung hält den Vector Store deshalb bewusst nur so lange wie nötig und löscht ihn beim Schließen des Panels.
-- `file_search` zerlegt das Dokument intern in Chunks für die Volltextsuche; ein Fund, der mehrere Felder (Subnet, NSG-Regel, Route) gemeinsam sehen muss, kann in seltenen Fällen auf mehrere Chunks verteilt werden. Die Instruktionen weisen das Modell explizit an, diese Felder zusammen zu prüfen, ersetzen aber keine Garantie.
-- `pdf-lib` erhöht das Browser-Bundle um ~420 kB (gzip ~170 kB) – ein bewusster Kompromiss für reine Client-PDF-Erzeugung ohne Server (R19 bereits vorbestehend zur Bundle-Größe).
-- Ein eingefügtes Bild wird **nicht** durch `sanitizeExport()` geprüft oder anonymisiert – anders als der Export selbst kann ein Screenshot reale Namen/IDs/IP-Adressen enthalten, wenn der Nutzer eines aus dem Azure Portal einfügt. Das liegt in der Verantwortung des Nutzers; sobald ein Bild an die nächste Nachricht angehängt ist, zeigt die UI eine deutliche Warnung, bevor gesendet wird.
-- Das Sitzungsverzeichnis (`localStorage`) ist pro Browser/Gerät, nicht synchronisiert; ein anderes Gerät oder ein anderer Browser sieht keine frühere Historie.
