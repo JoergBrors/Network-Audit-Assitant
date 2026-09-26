@@ -33,6 +33,8 @@ export interface TopologyViewProps {
   changes?: ComparisonGraph | undefined;
   /** True when IP mode or "only changes" filter is active (for the empty-result message). */
   filterActive?: boolean;
+  /** Active tag filter text (for the empty-result message). */
+  tagQuery?: string | undefined;
   /** Ordered node IDs of a traced network path, drawn as animated path edges. */
   pathEdges?: string[] | undefined;
 }
@@ -56,6 +58,7 @@ function TopologyCanvas({
   onToggleExpand,
   changes,
   filterActive,
+  tagQuery,
   pathEdges,
 }: TopologyViewProps) {
   const layoutClient = useMemo(() => new LayoutClient(), []);
@@ -165,8 +168,9 @@ function TopologyCanvas({
   }, [ready, layoutKey, revealId, flow, view]);
 
   if (filterActive && view.matchCount === 0) {
+    const tag = tagQuery ? `mit Tag „${tagQuery}“ ` : "";
     const label =
-      ipMode === "ipv4"
+      tag || ipMode === "ipv4"
         ? "IPv4-konfigurierten "
         : ipMode === "ipv6"
           ? "IPv6-konfigurierten "
@@ -202,8 +206,8 @@ function TopologyCanvas({
               {view.totalCandidates} Elemente wären zu viele für eine lesbare Darstellung.
             </>
           )}{" "}
-          Für mehr Details eine Subscription filtern, ein Element aufklappen (Doppelklick) oder „Fokus“
-          setzen.
+          Für mehr Details Elementtypen ausblenden, eine Subscription filtern, ein Element aufklappen
+          (Doppelklick) oder „Fokus“ setzen.
         </div>
       )}
       <ReactFlow

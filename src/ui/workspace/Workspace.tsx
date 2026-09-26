@@ -14,6 +14,20 @@ import { buildRoutingContext } from "../../routing/context.js";
 import { analyzeDefaultPaths } from "../../routing/analysis.js";
 import { analyzeInbound } from "../../routing/inbound.js";
 import { downloadJson } from "./download.js";
+import { TypeFilter } from "./TypeFilter.js";
+import { TagFilter } from "./TagFilter.js";
+import { buildTagIndex, nodesWithTag } from "../../graph/tags.js";
+import type { NodeType } from "../../models/graph.js";
+
+const HIDDEN_TYPES_KEY = "graph-hidden-types";
+function loadHiddenTypes(): Set<NodeType> {
+  try {
+    const raw = localStorage.getItem(HIDDEN_TYPES_KEY);
+    return new Set(raw ? (JSON.parse(raw) as NodeType[]) : []);
+  } catch {
+    return new Set();
+  }
+}
 
 export interface WorkspaceComparison {
   diff: SnapshotDiff;
@@ -69,6 +83,9 @@ export function Workspace({
       if (!current.has(id)) current.set(id, ref);
     return current;
   }, [model.inventory, comparison]);
+  const tagIndex = useMemo(() => buildTagIndex(entities), [entities]);
+  const [tagQuery, setTagQuery] = useState("");
+  const tagIds = useMemo(() => nodesWithTag(tagIndex, tagQuery), [tagIndex, tagQuery]);
   const changedIds = useMemo(() => {
     if (!comparison) return undefined;
     const ids = new Set(comparison.diff.resources.map((r) => r.id));
@@ -81,6 +98,15 @@ export function Workspace({
   const [onlyChanges, setOnlyChanges] = useState(false);
 
   const [level, setLevel] = useState(2);
+  const [hiddenTypes, setHiddenTypesState] = useState<Set<NodeType>>(loadHiddenTypes);
+  const setHiddenTypes = useCallback((next: Set<NodeType>) => {
+    setHiddenTypesState(next);
+    try {
+      localStorage.setItem(HIDDEN_TYPES_KEY, JSON.stringify([...next]));
+    } catch {
+      // Storage unavailable: the selection just is not remembered.
+    }
+  }, []);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [focusId, setFocusId] = useState<string | undefined>();
   const [ipMode, setIpMode] = useState<IpViewMode>("all");
@@ -119,8 +145,22 @@ export function Workspace({
         changedIds,
         onlyChanges: onlyChanges && changedIds !== undefined,
         pathIds,
+        hiddenTypes,
+        tagIds,
       }),
-    [index, level, expanded, focusId, subscriptionFilter, ipMode, changedIds, onlyChanges, pathIds],
+    [
+      index,
+      level,
+      expanded,
+      focusId,
+      subscriptionFilter,
+      ipMode,
+      changedIds,
+      onlyChanges,
+      pathIds,
+      hiddenTypes,
+      tagIds,
+    ],
   );
 
   const toggleExpand = useCallback((id: string) => {
@@ -168,7 +208,7 @@ export function Workspace({
               Internet-Pfade
             </button>
           </div>
-          <SearchBox index={index} onSelect={reveal} />
+          <SearchBox index={index} tags={tagIndex} onSelect={reveal} />
           <label>
             Detailstufe{" "}
             <select value={level} onChange={(e) => setLevel(Number(e.target.value))}>
@@ -179,6 +219,8 @@ export function Workspace({
               ))}
             </select>
           </label>
+          <TypeFilter nodes={index.byId} level={level} hidden={hiddenTypes} onChange={setHiddenTypes} />
+          <TagFilter index={tagIndex} value={tagQuery} matches={tagIds?.size} onChange={setTagQuery} />
           <div className="segmented" role="group" aria-label="IP-Modus">
             {IP_MODES.map((m) => (
               <button
@@ -282,7 +324,8 @@ export function Workspace({
             showEdgeLabels={showEdgeLabels}
             revealId={revealId}
             changes={compareGraph}
-            filterActive={!pathShown && (ipMode !== "all" || (onlyChanges && !!comparison))}
+            filterActive={!pathShown && (ipMode !== "all" || (onlyChanges && !!comparison) || !!tagIds)}
+            tagQuery={tagIds ? tagQuery.trim() : undefined}
             onSelect={(id) => {
               setSelectedId(id);
               setRevealId(undefined);

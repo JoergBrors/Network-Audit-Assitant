@@ -82,7 +82,7 @@ export const ResourceNode = memo(function ResourceNode({ data, selected }: NodeP
   return (
     <div
       className={`topo-node cat-${category}${selected ? " selected" : ""}${neighbor ? " neighbor" : ""}${emphasisClass(emphasis)}${changeClass(change)}`}
-      title={`${NODE_TYPE_LABELS[node.type]}: ${node.name}${emphasis === "context" ? "\n(Kontext: Beziehung zu passenden Komponenten, selbst nicht im gewählten IP-Modus konfiguriert)" : ""}\n${node.id}`}
+      title={`${NODE_TYPE_LABELS[node.type]}: ${node.name}${emphasis === "context" ? "\n(Kontext: Beziehung zu passenden Komponenten, passt selbst nicht zum aktiven Filter)" : ""}\n${node.id}`}
     >
       <Handle type="target" position={Position.Top} className="handle" isConnectable={false} />
       <div className="topo-node-row">
