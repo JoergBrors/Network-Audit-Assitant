@@ -112,6 +112,24 @@ export function checkSecurity(
       };
       return result;
     }
+    // Allow: record an informational hop so the NSG shows up in the hop list and the graph
+    // highlight too (pathIds is built from hop.nodeId — a silently-passed NSG previously vanished
+    // from both, even though it is a directly attached, evaluated control on this flow).
+    result.hops.push({
+      type: "subnet",
+      nodeId: nsgId,
+      label: nameOf(nsgId),
+      reason: `NSG (${scope}) erlaubt ${direction === "Inbound" ? "eingehend" : "ausgehend"}: ${d.rule}`,
+      decision: { control: "nsg", resourceId: nsgId, direction, access: "Allow", rule: d.rule },
+      confidence: d.confidence,
+      evidence: [
+        {
+          kind: "rule",
+          resourceId: nsgId,
+          description: `Regel ${d.rule} (Priorität ${d.priority})${d.note ? ` – ${d.note}` : ""}`,
+        },
+      ],
+    });
   }
   return result;
 }
