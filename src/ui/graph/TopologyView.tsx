@@ -185,25 +185,27 @@ function TopologyCanvas({
     );
   }
 
-  if (view.truncated) {
-    return (
-      <div className="topology-message">
-        <p>
-          <strong>{view.totalCandidates} Elemente</strong> wären auf dieser Detailstufe sichtbar. Das ist zu
-          viel für eine lesbare Darstellung.
-        </p>
-        <p className="muted">
-          Detailstufe reduzieren, eine Subscription filtern oder ein Element im Baum wählen und „Fokus“
-          setzen.
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="topology-canvas">
       {!ready && !error && <div className="topology-overlay">Layout wird berechnet …</div>}
       {error && <div className="topology-overlay status-error">Layout-Fehler: {error}</div>}
+      {view.truncated && (
+        <div className="topology-notice status-warn" role="status">
+          {view.capped ? (
+            <>
+              <strong>Ansicht gekürzt:</strong> {view.totalCandidates} Elemente, gezeigt werden die ersten{" "}
+              {view.nodes.length}.
+            </>
+          ) : (
+            <>
+              <strong>Detailstufe automatisch auf {view.effectiveLevel} reduziert</strong> –{" "}
+              {view.totalCandidates} Elemente wären zu viele für eine lesbare Darstellung.
+            </>
+          )}{" "}
+          Für mehr Details eine Subscription filtern, ein Element aufklappen (Doppelklick) oder „Fokus“
+          setzen.
+        </div>
+      )}
       <ReactFlow
         nodes={nodes}
         edges={edges}
