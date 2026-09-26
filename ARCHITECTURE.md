@@ -823,7 +823,7 @@ Felder je Eintrag: `ts`, `level`, `event`, plus event-spezifische Zahlen (`durat
 
 ### 22.1 Ablauf
 
-1. **Anmeldung:** Bevorzugt ohne Schlüssel mit Microsoft Entra ID. Das MSAL-Konto des angemeldeten Benutzers liefert ein Token für `https://cognitiveservices.azure.com/.default` (per `VITE_AZURE_OPENAI_SCOPE` änderbar), das das SDK als Token-Provider nutzt und bei Bedarf erneuert (Einrichtung: ENTRA-ID-SETUP.md § 8.1). Ein API-Schlüssel (`VITE_AZURE_OPENAI_API_KEY`) ist nur ein Rückfall für den Offline-Betrieb ohne Anmeldung.
+1. **Anmeldung:** Bevorzugt ohne Schlüssel mit Microsoft Entra ID. Das MSAL-Konto des angemeldeten Benutzers liefert ein Token für `https://cognitiveservices.azure.com/.default` (per `VITE_AZURE_OPENAI_SCOPE` änderbar), das das SDK als Token-Provider nutzt und bei Bedarf erneuert (Einrichtung: ENTRA-ID-SETUP.md § 8.1). Ist ein API-Schlüssel (`VITE_AZURE_OPENAI_API_KEY`) gesetzt, hat er immer Vorrang: Die KI-Analyse braucht dann keine Microsoft-Anmeldung, auch nicht nach einem Offline-Import.
 2. **Sitzung starten** (`startAnalysisSession`): Der Export wird **einmal** als JSON-Datei hochgeladen (`files.create`, `purpose=assistants`). Es gibt keinen Modellaufruf zum Start und keine Indizierung, die Sitzung ist direkt nach dem Upload bereit.
 3. **Chatten** (`sendChatMessage`): Jede Frage ist ein Responses-API-Aufruf mit dem Tool **Code Interpreter** (`container: {type: "auto", file_ids: [...]}`). Das Modell lädt den Export in einer Python-Sandbox und wertet ihn gezielt aus. Das ist präziser als eine Volltextsuche über JSON-Ausschnitte, weil Beziehungen (Subnet → NSG → Regeln → Routen) im Zusammenhang geprüft werden. Weitere Eigenschaften:
    - **Streaming** (`stream: true`): Die Antwort erscheint Token für Token. Laufende Python-Auswertungen werden als Status angezeigt.
@@ -859,7 +859,7 @@ Felder je Eintrag: `ts`, `level`, `event`, plus event-spezifische Zahlen (`durat
 `.env.local` (siehe `.env.example`):
 - `VITE_AZURE_OPENAI_ENDPOINT` und `VITE_AZURE_OPENAI_MODEL` (Deployment) sind Pflicht.
 - `VITE_AZURE_OPENAI_REASONING_EFFORT` und `VITE_AZURE_OPENAI_SCOPE` sind optional.
-- `VITE_AZURE_OPENAI_API_KEY` ist nur ein Rückfall.
+- `VITE_AZURE_OPENAI_API_KEY` ist optional; gesetzt hat er Vorrang vor Entra ID.
 
 Der Produktions-Build nimmt den Endpunkt automatisch in `connect-src` der Content Security Policy auf (`vite.config.ts`); ohne Endpunkt bleibt die CSP unverändert strikt.
 
